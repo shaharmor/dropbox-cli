@@ -9,12 +9,12 @@ export function registerSearchCommand(program: Command): void {
     .command("search <query>")
     .description("Search for files and folders by name")
     .option("--path <path>", "Limit search to a specific folder path")
-    .option("--max <count>", "Maximum number of results", "100")
-    .action(async (query: string, options: { path?: string; max?: string }) => {
+    .option("--limit <count>", "Maximum number of results", "100")
+    .action(async (query: string, options: { path?: string; limit?: string }) => {
       const searchOptions: Record<string, unknown> = {
         query,
         options: {
-          max_results: parseInt(options.max || "100", 10),
+          max_results: parseInt(options.limit || "100", 10),
           file_status: { ".tag": "active" },
           filename_only: false,
         },

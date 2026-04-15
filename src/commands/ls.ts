@@ -9,7 +9,8 @@ export function registerLsCommand(program: Command): void {
     .command("ls [path]")
     .description("List files and folders in a Dropbox directory")
     .option("--limit <count>", "Maximum number of entries to return")
-    .action(async (path: string = "", options: { limit?: string }) => {
+    .option("--recursive", "List files in all subdirectories")
+    .action(async (path: string = "", options: { limit?: string; recursive?: boolean }) => {
       // Dropbox uses "" for root, not "/"
       const dbxPath = path === "/" ? "" : path;
       const limit = options.limit ? parseInt(options.limit, 10) : undefined;
@@ -17,6 +18,7 @@ export function registerLsCommand(program: Command): void {
       // First page
       const listArgs: Record<string, unknown> = {
         path: dbxPath,
+        recursive: options.recursive ?? false,
         include_mounted_folders: true,
         include_non_downloadable_files: true,
       };
