@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import { contentUpload, rpc } from "../lib/api";
+import { contentUpload } from "../lib/api";
 import { printSuccess, printError, isHuman, formatBytes } from "../lib/output";
 import { log, logError } from "../lib/logger";
 import { statSync, readFileSync } from "fs";
