@@ -30,8 +30,8 @@ async function promptForCredentials(): Promise<{ client_id: string; client_secre
   logError("  - Choose 'Full Dropbox' access type");
   logError(`  - Add redirect URI: ${REDIRECT_URI}\n`);
 
-  const client_id = await rl.question("Client ID: ");
-  const client_secret = await rl.question("Client secret: ");
+  const client_id = await rl.question("App key: ");
+  const client_secret = await rl.question("App secret: ");
   rl.close();
 
   return { client_id: client_id.trim(), client_secret: client_secret.trim() };
