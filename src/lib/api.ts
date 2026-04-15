@@ -183,3 +183,22 @@ export async function pollBatchJob<T = unknown>(endpoint: string, asyncJobId: st
     printError("batch_error", `Batch job failed: ${result[".tag"]}`);
   }
 }
+
+export async function rpcRaw(endpoint: string, body: Record<string, unknown> = {}): Promise<{
+  ok: boolean;
+  status: number;
+  data: unknown;
+}> {
+  const auth = await getValidAuth();
+  const response = await fetchWithRetry(`${RPC_BASE}/${endpoint}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${auth.access_token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  const data = await response.json().catch(() => null);
+  return { ok: response.ok, status: response.status, data };
+}
