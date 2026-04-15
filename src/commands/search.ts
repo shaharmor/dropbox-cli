@@ -11,24 +11,36 @@ export function registerSearchCommand(program: Command): void {
     .option("--path <path>", "Limit search to a specific folder path")
     .option("--limit <count>", "Maximum number of results", "100")
     .action(async (query: string, options: { path?: string; limit?: string }) => {
-      const searchOptions: Record<string, unknown> = {
+      const limit = parseInt(options.limit || "100", 10);
+
+      const searchArgs: Record<string, unknown> = {
         query,
         options: {
-          max_results: parseInt(options.limit || "100", 10),
+          max_results: Math.min(limit, 1000),
           file_status: { ".tag": "active" },
           filename_only: false,
         },
       };
 
       if (options.path) {
-        (searchOptions.options as Record<string, unknown>).path = options.path;
+        (searchArgs.options as Record<string, unknown>).path = options.path;
       }
 
-      const result = await rpc<SearchResult>("files/search_v2", searchOptions);
+      // First page
+      let result = await rpc<SearchResult>("files/search_v2", searchArgs);
+      const allMatches = [...result.matches];
 
-      const entries: DropboxEntry[] = result.matches.map(
-        (m) => m.metadata.metadata
-      );
+      // Auto-paginate until we have enough or no more results
+      while (result.has_more && result.cursor && allMatches.length < limit) {
+        result = await rpc<SearchResult>("files/search/continue_v2", {
+          cursor: result.cursor,
+        });
+        allMatches.push(...result.matches);
+      }
+
+      const entries: DropboxEntry[] = allMatches
+        .slice(0, limit)
+        .map((m) => m.metadata.metadata);
 
       if (isHuman()) {
         if (entries.length === 0) {
