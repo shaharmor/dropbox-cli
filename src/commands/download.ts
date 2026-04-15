@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import { contentDownload } from "../lib/api";
-import { printSuccess, printError, isHuman, formatBytes } from "../lib/output";
+import { printSuccess, isHuman, formatBytes } from "../lib/output";
 import { logError } from "../lib/logger";
 import { writeFileSync, existsSync, mkdirSync } from "fs";
 import { basename, join, dirname, resolve } from "path";
