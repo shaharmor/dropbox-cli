@@ -116,7 +116,7 @@ export async function rpc<T = unknown>(endpoint: string, body: Record<string, un
 export async function contentUpload<T = unknown>(
   endpoint: string,
   metadata: Record<string, unknown>,
-  content: Buffer | Uint8Array
+  content: Uint8Array
 ): Promise<T> {
   const auth = await getValidAuth();
   const response = await fetchWithRetry(`${CONTENT_BASE}/${endpoint}`, {
@@ -126,7 +126,7 @@ export async function contentUpload<T = unknown>(
       "Content-Type": "application/octet-stream",
       "Dropbox-API-Arg": JSON.stringify(metadata),
     },
-    body: content,
+    body: content as BodyInit,
   });
 
   if (!response.ok) {
