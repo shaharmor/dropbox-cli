@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import { rpc, pollBatchJob } from "../lib/api";
+import { rpc, rpcRaw, pollBatchJob } from "../lib/api";
 import { printSuccess, isHuman } from "../lib/output";
 import { log, logError } from "../lib/logger";
 import type { SearchResult, BatchResult } from "../types";
@@ -56,12 +56,11 @@ export function registerBulkMvCommand(program: Command): void {
 
       // Create destination folder (ignore error if it already exists)
       if (!dryRun) {
-        try {
-          await rpc("files/create_folder_v2", { path: dest, autorename: false });
+        const mkdirResult = await rpcRaw("files/create_folder_v2", { path: dest, autorename: false });
+        if (mkdirResult.ok) {
           log(`Created folder: ${dest}`);
-        } catch {
-          // Folder likely already exists
-          log(`Destination folder ${dest} already exists or could not be created`);
+        } else {
+          log(`Destination folder ${dest} already exists`);
         }
       }
 
