@@ -10,6 +10,11 @@ export function registerSearchCommand(program: Command): void {
     .description("Search for files and folders by name")
     .option("--path <path>", "Limit search to a specific folder path")
     .option("--limit <count>", "Maximum number of results", "100")
+    .addHelpText("after", `
+Examples:
+  $ dropbox-cli search "quarterly report"                Search all of Dropbox
+  $ dropbox-cli search "*.pdf" --path /Documents         Search within a folder
+  $ dropbox-cli search "budget" --limit 5                Limit number of results`)
     .action(async (query: string, options: { path?: string; limit?: string }) => {
       const limit = parseInt(options.limit || "100", 10);
 

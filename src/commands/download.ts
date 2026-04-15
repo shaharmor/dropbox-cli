@@ -55,6 +55,11 @@ export function registerDownloadCommand(program: Command): void {
     .description(
       "Download file(s) from Dropbox. Last argument is the local directory (defaults to current directory)."
     )
+    .addHelpText("after", `
+Examples:
+  $ dropbox-cli download /Documents/report.pdf             Download to current directory
+  $ dropbox-cli download /Documents/report.pdf ./local     Download to a specific directory
+  $ dropbox-cli download /Photos/a.jpg /Photos/b.jpg .     Download multiple files`)
     .action(async (sources: string[]) => {
       // If only one arg, download to current dir
       // If multiple args, last one is local destination

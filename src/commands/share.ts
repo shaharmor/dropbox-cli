@@ -8,6 +8,10 @@ export function registerShareCommand(program: Command): void {
   program
     .command("share <path>")
     .description("Create a shared link for a file or folder")
+    .addHelpText("after", `
+Examples:
+  $ dropbox-cli share /Documents/report.pdf    Get a shareable link for a file
+  $ dropbox-cli share /Photos/Vacation         Get a shareable link for a folder`)
     .action(async (path: string) => {
       const result = await rpcRaw("sharing/create_shared_link_with_settings", {
         path,

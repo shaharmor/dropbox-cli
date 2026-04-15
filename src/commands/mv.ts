@@ -13,6 +13,11 @@ export function registerMvCommand(program: Command): void {
       "For multiple files, destination must be a directory."
     )
     .option("--autorename", "Automatically rename on conflict")
+    .addHelpText("after", `
+Examples:
+  $ dropbox-cli mv /old-name.txt /new-name.txt              Rename a file
+  $ dropbox-cli mv /Documents/file.txt /Archive/file.txt    Move a file to another folder
+  $ dropbox-cli mv /a.txt /b.txt /c.txt /Archive            Move multiple files to a folder`)
     .action(async (sources: string[], options: { autorename?: boolean }) => {
       if (sources.length < 2) {
         printError("invalid_args", "Usage: dropbox-cli mv <source...> <destination>");

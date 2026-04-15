@@ -8,6 +8,10 @@ export function registerInfoCommand(program: Command): void {
   program
     .command("info <path>")
     .description("Get metadata for a file or folder")
+    .addHelpText("after", `
+Examples:
+  $ dropbox-cli info /Documents/report.pdf    Get file metadata (size, modified date, hash)
+  $ dropbox-cli info /Photos                  Get folder metadata`)
     .action(async (path: string) => {
       const result = await rpc<DropboxEntry>("files/get_metadata", {
         path,

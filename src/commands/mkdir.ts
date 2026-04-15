@@ -7,6 +7,10 @@ export function registerMkdirCommand(program: Command): void {
   program
     .command("mkdir <path>")
     .description("Create a folder in Dropbox")
+    .addHelpText("after", `
+Examples:
+  $ dropbox-cli mkdir /Projects/new-project    Create a new folder
+  $ dropbox-cli mkdir /Photos/2024/January     Create nested folders`)
     .action(async (path: string) => {
       const result = await rpc<{ metadata: Record<string, unknown> }>(
         "files/create_folder_v2",

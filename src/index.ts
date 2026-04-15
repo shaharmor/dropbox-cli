@@ -3,16 +3,16 @@ import { Command } from "commander";
 import { setVerbose } from "./lib/logger";
 import { setHumanMode } from "./lib/output";
 import { registerAuthCommands } from "./commands/auth";
-import { registerLsCommand } from "./commands/ls";
-import { registerInfoCommand } from "./commands/info";
-import { registerMkdirCommand } from "./commands/mkdir";
-import { registerUploadCommand } from "./commands/upload";
-import { registerDownloadCommand } from "./commands/download";
-import { registerMvCommand } from "./commands/mv";
+import { registerBulkMvCommand } from "./commands/bulk-mv";
 import { registerCpCommand } from "./commands/cp";
+import { registerDownloadCommand } from "./commands/download";
+import { registerInfoCommand } from "./commands/info";
+import { registerLsCommand } from "./commands/ls";
+import { registerMkdirCommand } from "./commands/mkdir";
+import { registerMvCommand } from "./commands/mv";
 import { registerSearchCommand } from "./commands/search";
 import { registerShareCommand } from "./commands/share";
-import { registerBulkMvCommand } from "./commands/bulk-mv";
+import { registerUploadCommand } from "./commands/upload";
 
 const program = new Command();
 
@@ -30,17 +30,17 @@ program.hook("preAction", (thisCommand) => {
   setHumanMode(opts.human ?? false);
 });
 
-// Register all commands
+// Register all commands (alphabetical order)
 registerAuthCommands(program);
-registerLsCommand(program);
-registerInfoCommand(program);
-registerMkdirCommand(program);
-registerUploadCommand(program);
-registerDownloadCommand(program);
-registerMvCommand(program);
+registerBulkMvCommand(program);
 registerCpCommand(program);
+registerDownloadCommand(program);
+registerInfoCommand(program);
+registerLsCommand(program);
+registerMkdirCommand(program);
+registerMvCommand(program);
 registerSearchCommand(program);
 registerShareCommand(program);
-registerBulkMvCommand(program);
+registerUploadCommand(program);
 
 program.parse();

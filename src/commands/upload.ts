@@ -92,6 +92,11 @@ export function registerUploadCommand(program: Command): void {
       "For multiple files, the remote path must be a directory."
     )
     .option("--autorename", "Automatically rename on conflict")
+    .addHelpText("after", `
+Examples:
+  $ dropbox-cli upload ./report.pdf /Documents/report.pdf    Upload a single file
+  $ dropbox-cli upload ./a.txt ./b.txt /Documents            Upload multiple files to a folder
+  $ dropbox-cli upload ./photo.jpg /Photos/pic.jpg --autorename    Auto-rename on conflict`)
     .action(async (sources: string[], options: { autorename?: boolean }) => {
       if (sources.length < 2) {
         printError("invalid_args", "Usage: dropbox-cli upload <local-file...> <remote-path>");

@@ -13,6 +13,11 @@ export function registerCpCommand(program: Command): void {
       "For multiple files, destination must be a directory."
     )
     .option("--autorename", "Automatically rename on conflict")
+    .addHelpText("after", `
+Examples:
+  $ dropbox-cli cp /Documents/report.pdf /Backup/report.pdf    Copy a file
+  $ dropbox-cli cp /a.txt /b.txt /c.txt /Backup               Copy multiple files to a folder
+  $ dropbox-cli cp /file.txt /file-copy.txt --autorename       Auto-rename on conflict`)
     .action(async (sources: string[], options: { autorename?: boolean }) => {
       if (sources.length < 2) {
         printError("invalid_args", "Usage: dropbox-cli cp <source...> <destination>");

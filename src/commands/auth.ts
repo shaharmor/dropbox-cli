@@ -4,7 +4,14 @@ import { printSuccess, printError, isHuman } from "../lib/output";
 import { logError } from "../lib/logger";
 
 export function registerAuthCommands(program: Command): void {
-  const auth = program.command("auth").description("Manage Dropbox authentication");
+  const auth = program
+    .command("auth")
+    .description("Manage Dropbox authentication")
+    .addHelpText("after", `
+Examples:
+  $ dropbox-cli auth login          Log in via OAuth2
+  $ dropbox-cli auth status         Check if you're authenticated
+  $ dropbox-cli auth logout         Clear stored tokens`);
 
   auth
     .command("login")
