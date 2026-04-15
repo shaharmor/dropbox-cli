@@ -10,7 +10,20 @@ export function registerLsCommand(program: Command): void {
     .description("List files and folders in a Dropbox directory")
     .option("--limit <count>", "Maximum number of entries to return")
     .option("--recursive", "List files in all subdirectories")
-    .action(async (path: string = "", options: { limit?: string; recursive?: boolean }) => {
+    .option("--type <type>", "Filter by type: file or folder")
+    .addHelpText("after", `
+Examples:
+  $ dropbox-cli ls                          List root directory
+  $ dropbox-cli ls /Photos                  List a specific folder
+  $ dropbox-cli ls /Documents --limit 10    Show first 10 entries
+  $ dropbox-cli ls /Projects --recursive    List all files recursively
+  $ dropbox-cli ls /Projects --type folder  Show only folders
+  $ dropbox-cli ls /Projects --type file    Show only files`)
+    .action(async (path: string = "", options: { limit?: string; recursive?: boolean; type?: string }) => {
+      if (options.limit && options.type) {
+        throw new Error("--limit and --type cannot be used together");
+      }
+
       // Dropbox uses "" for root, not "/"
       const dbxPath = path === "/" ? "" : path;
       const limit = options.limit ? parseInt(options.limit, 10) : undefined;
@@ -38,8 +51,13 @@ export function registerLsCommand(program: Command): void {
         allEntries.push(...result.entries);
       }
 
+      // Filter by type if requested
+      const filtered = options.type
+        ? allEntries.filter((e) => e[".tag"] === options.type)
+        : allEntries;
+
       // Trim to exact limit if we overshot
-      const entries = limit !== undefined ? allEntries.slice(0, limit) : allEntries;
+      const entries = limit !== undefined ? filtered.slice(0, limit) : filtered;
 
       if (isHuman()) {
         if (entries.length === 0) {
