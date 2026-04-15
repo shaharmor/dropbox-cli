@@ -12,6 +12,7 @@ import { registerMvCommand } from "./commands/mv";
 import { registerCpCommand } from "./commands/cp";
 import { registerSearchCommand } from "./commands/search";
 import { registerShareCommand } from "./commands/share";
+import { registerBulkMvCommand } from "./commands/bulk-mv";
 
 const program = new Command();
 
@@ -40,5 +41,6 @@ registerMvCommand(program);
 registerCpCommand(program);
 registerSearchCommand(program);
 registerShareCommand(program);
+registerBulkMvCommand(program);
 
 program.parse();
