@@ -64,6 +64,14 @@ async function fetchWithRetry(url: string, options: RequestInit, retryCount = 0)
     return fetchWithRetry(url, options, retryCount + 1);
   }
 
+  // Server errors — retry with exponential backoff
+  if (response.status >= 500 && retryCount < 5) {
+    const delay = Math.min(2 ** retryCount, 16);
+    log(`Server error ${response.status}. Retrying after ${delay}s (attempt ${retryCount + 1})`);
+    await new Promise((resolve) => setTimeout(resolve, delay * 1000));
+    return fetchWithRetry(url, options, retryCount + 1);
+  }
+
   // Auth error — try refresh once
   if (response.status === 401 && retryCount === 0) {
     log("Got 401, attempting token refresh...");
@@ -163,7 +171,9 @@ export async function contentDownload(
   return { metadata: resultMetadata, body: response.body! };
 }
 
-export async function pollBatchJob<T = unknown>(endpoint: string, asyncJobId: string): Promise<T> {
+export async function pollBatchJob<T = unknown>(endpoint: string, asyncJobId: string, label?: string): Promise<T> {
+  const prefix = label ? `[${label}] ` : "";
+  let delay = 1;
   while (true) {
     const result = await rpc<{ ".tag": string } & Record<string, unknown>>(endpoint, {
       async_job_id: asyncJobId,
@@ -174,13 +184,14 @@ export async function pollBatchJob<T = unknown>(endpoint: string, asyncJobId: st
     }
 
     if (result[".tag"] === "in_progress") {
-      log("Batch job in progress, polling again in 1s...");
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      log(`${prefix}Batch job in progress, polling again in ${delay}s...`);
+      await new Promise((resolve) => setTimeout(resolve, delay * 1000));
+      delay = Math.min(delay * 2, 10);
       continue;
     }
 
     // Failed
-    printError("batch_error", `Batch job failed: ${result[".tag"]}`);
+    printError("batch_error", `${prefix}Batch job failed: ${result[".tag"]}`);
   }
 }
 
