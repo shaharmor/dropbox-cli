@@ -2,6 +2,10 @@
 
 ## [1.0.0] - 2026-04-16
 
+### Added
+- MIT license
+- CI release workflow — builds multi-platform binaries on tag push
+
 ### Refactored
 - Extract `logHuman()` helper to centralize human-readable output gating
 - Bulk-mv now tracks per-file success/failure and reports a `failed` count
