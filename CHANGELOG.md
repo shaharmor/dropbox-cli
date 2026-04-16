@@ -4,13 +4,7 @@
 
 ### Added
 - MIT license
-- CI release workflow — builds multi-platform binaries on tag push
-
-### Refactored
-- Extract `logHuman()` helper to centralize human-readable output gating
-- Bulk-mv now tracks per-file success/failure and reports a `failed` count
-
-### Added
+- CI release workflow — builds multi-platform binaries (macOS, Linux, Windows) on tag push
 - Comprehensive test suite for all commands and lib modules
 - Project README with setup, usage, and command reference
 - `--type` flag to `ls` command for filtering by file or folder
@@ -29,6 +23,10 @@
 - Dropbox API client with auth, retry, rate limiting, and exponential backoff
 - Logger and output formatting modules
 - Config module for app credentials and auth tokens
+
+### Refactored
+- Extract `logHuman()` helper to centralize human-readable output gating
+- Bulk-mv now tracks per-file success/failure and reports a `failed` count
 
 ### Fixed
 - Use `rpcRaw` for folder creation in bulk-mv to handle existing folders
