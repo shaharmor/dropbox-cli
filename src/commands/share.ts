@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { rpc, rpcRaw } from "../lib/api";
-import { printSuccess, printError, isHuman } from "../lib/output";
-import { logError } from "../lib/logger";
+import { printSuccess, printError } from "../lib/output";
+import { logHuman } from "../lib/logger";
 import type { SharedLinkMetadata } from "../types";
 
 export function registerShareCommand(program: Command): void {
@@ -24,9 +24,7 @@ Examples:
 
       if (result.ok) {
         const link = result.data as SharedLinkMetadata;
-        if (isHuman()) {
-          logError(`Shared link: ${link.url}`);
-        }
+        logHuman(`Shared link: ${link.url}`);
         printSuccess(link);
         return;
       }
@@ -40,9 +38,7 @@ Examples:
         );
 
         if (existing.links.length > 0) {
-          if (isHuman()) {
-            logError(`Existing shared link: ${existing.links[0].url}`);
-          }
+          logHuman(`Existing shared link: ${existing.links[0].url}`);
           printSuccess(existing.links[0]);
           return;
         }

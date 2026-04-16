@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { rpc } from "../lib/api";
-import { printSuccess, isHuman, formatBytes, formatDate } from "../lib/output";
-import { logError } from "../lib/logger";
+import { printSuccess, formatBytes, formatDate } from "../lib/output";
+import { logHuman } from "../lib/logger";
 import type { ListFolderResult, DropboxEntry } from "../types";
 
 export function registerLsCommand(program: Command): void {
@@ -59,29 +59,27 @@ Examples:
       // Trim to exact limit if we overshot
       const entries = limit !== undefined ? filtered.slice(0, limit) : filtered;
 
-      if (isHuman()) {
-        if (entries.length === 0) {
-          logError("(empty folder)\n");
-        } else {
-          // Print header
-          logError(
-            `${"Type".padEnd(8)}${"Name".padEnd(40)}${"Size".padStart(12)}  Modified`
+      if (entries.length === 0) {
+        logHuman("(empty folder)\n");
+      } else {
+        // Print header
+        logHuman(
+          `${"Type".padEnd(8)}${"Name".padEnd(40)}${"Size".padStart(12)}  Modified`
+        );
+        logHuman("-".repeat(80));
+        for (const entry of entries) {
+          const type = entry[".tag"] === "folder" ? "folder" : "file";
+          const size =
+            entry[".tag"] === "file" ? formatBytes(entry.size) : "-";
+          const modified =
+            entry[".tag"] === "file"
+              ? formatDate(entry.server_modified)
+              : "-";
+          logHuman(
+            `${type.padEnd(8)}${entry.name.padEnd(40)}${size.padStart(12)}  ${modified}`
           );
-          logError("-".repeat(80));
-          for (const entry of entries) {
-            const type = entry[".tag"] === "folder" ? "folder" : "file";
-            const size =
-              entry[".tag"] === "file" ? formatBytes(entry.size) : "-";
-            const modified =
-              entry[".tag"] === "file"
-                ? formatDate(entry.server_modified)
-                : "-";
-            logError(
-              `${type.padEnd(8)}${entry.name.padEnd(40)}${size.padStart(12)}  ${modified}`
-            );
-          }
-          logError(`\n${entries.length} items`);
         }
+        logHuman(`\n${entries.length} items`);
       }
 
       printSuccess(entries);

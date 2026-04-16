@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { rpc, pollBatchJob } from "../lib/api";
-import { printSuccess, printError, isHuman } from "../lib/output";
-import { logError } from "../lib/logger";
+import { printSuccess, printError } from "../lib/output";
+import { logHuman } from "../lib/logger";
 import type { DropboxEntry, BatchResult } from "../types";
 import { basename } from "path";
 
@@ -36,9 +36,7 @@ Examples:
           allow_ownership_transfer: false,
         });
 
-        if (isHuman()) {
-          logError(`Moved to: ${result.metadata.path_display}`);
-        }
+        logHuman(`Moved to: ${result.metadata.path_display}`);
 
         printSuccess(result.metadata);
       } else {
@@ -56,15 +54,15 @@ Examples:
 
         if (result[".tag"] === "async_job_id") {
           // Poll for completion
-          if (isHuman()) logError("Batch move in progress...");
+          logHuman("Batch move in progress...");
           const completed = await pollBatchJob<BatchResult>(
             "files/move_batch/check_v2",
             result.async_job_id!
           );
-          if (isHuman()) logError("Batch move complete.");
+          logHuman("Batch move complete.");
           printSuccess(completed.entries);
         } else {
-          if (isHuman()) logError("Batch move complete.");
+          logHuman("Batch move complete.");
           printSuccess(result.entries);
         }
       }

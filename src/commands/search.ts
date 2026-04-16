@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { rpc } from "../lib/api";
-import { printSuccess, isHuman, formatBytes } from "../lib/output";
-import { logError } from "../lib/logger";
+import { printSuccess, formatBytes } from "../lib/output";
+import { logHuman } from "../lib/logger";
 import type { SearchResult, DropboxEntry } from "../types";
 
 export function registerSearchCommand(program: Command): void {
@@ -47,17 +47,15 @@ Examples:
         .slice(0, limit)
         .map((m) => m.metadata.metadata);
 
-      if (isHuman()) {
-        if (entries.length === 0) {
-          logError("No results found.\n");
-        } else {
-          logError(`Found ${entries.length} result(s):\n`);
-          for (const entry of entries) {
-            const type = entry[".tag"] === "folder" ? "folder" : "file";
-            const size =
-              entry[".tag"] === "file" ? ` (${formatBytes(entry.size)})` : "";
-            logError(`  [${type}] ${entry.path_display}${size}`);
-          }
+      if (entries.length === 0) {
+        logHuman("No results found.\n");
+      } else {
+        logHuman(`Found ${entries.length} result(s):\n`);
+        for (const entry of entries) {
+          const type = entry[".tag"] === "folder" ? "folder" : "file";
+          const size =
+            entry[".tag"] === "file" ? ` (${formatBytes(entry.size)})` : "";
+          logHuman(`  [${type}] ${entry.path_display}${size}`);
         }
       }
 

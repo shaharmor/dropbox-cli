@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { contentDownload } from "../lib/api";
-import { printSuccess, isHuman, formatBytes } from "../lib/output";
-import { logError } from "../lib/logger";
+import { printSuccess, formatBytes } from "../lib/output";
+import { logHuman } from "../lib/logger";
 import { writeFileSync, existsSync, mkdirSync } from "fs";
 import { basename, join, dirname, resolve } from "path";
 
@@ -22,9 +22,7 @@ async function downloadSingleFile(
     mkdirSync(dir, { recursive: true });
   }
 
-  if (isHuman()) {
-    logError(`Downloading ${fileName}...`);
-  }
+  logHuman(`Downloading ${fileName}...`);
 
   // Stream to file
   const chunks: Uint8Array[] = [];
@@ -38,9 +36,7 @@ async function downloadSingleFile(
   const fullContent = Buffer.concat(chunks);
   writeFileSync(localPath, fullContent);
 
-  if (isHuman()) {
-    logError(`  Saved to: ${localPath} (${formatBytes(fullContent.length)})`);
-  }
+  logHuman(`  Saved to: ${localPath} (${formatBytes(fullContent.length)})`);
 
   return {
     remote_path: remotePath,

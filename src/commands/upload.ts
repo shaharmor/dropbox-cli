@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { contentUpload } from "../lib/api";
-import { printSuccess, printError, isHuman, formatBytes } from "../lib/output";
-import { log, logError } from "../lib/logger";
+import { printSuccess, printError, formatBytes } from "../lib/output";
+import { log, logHuman } from "../lib/logger";
 import { statSync, readFileSync } from "fs";
 import { basename, resolve } from "path";
 import type { FileMetadata } from "../types";
@@ -20,9 +20,7 @@ async function uploadSingleFile(
   const stat = statSync(absolutePath);
   const content = readFileSync(absolutePath);
 
-  if (isHuman()) {
-    logError(`Uploading ${basename(localPath)} (${formatBytes(stat.size)})...`);
-  }
+  logHuman(`Uploading ${basename(localPath)} (${formatBytes(stat.size)})...`);
 
   if (stat.size <= SINGLE_UPLOAD_LIMIT) {
     return contentUpload<FileMetadata>("files/upload", {
@@ -64,10 +62,8 @@ async function chunkedUpload(
     }, chunk);
     offset += CHUNK_SIZE;
 
-    if (isHuman()) {
-      const pct = Math.round((offset / totalSize) * 100);
-      logError(`  Progress: ${pct}% (${formatBytes(offset)} / ${formatBytes(totalSize)})`);
-    }
+    const pct = Math.round((offset / totalSize) * 100);
+    logHuman(`  Progress: ${pct}% (${formatBytes(offset)} / ${formatBytes(totalSize)})`);
   }
 
   // Finish with last chunk
@@ -118,9 +114,7 @@ Examples:
         const result = await uploadSingleFile(localFile, remotePath, autorename);
         results.push(result);
 
-        if (isHuman()) {
-          logError(`  Uploaded to: ${result.path_display}`);
-        }
+        logHuman(`  Uploaded to: ${result.path_display}`);
       }
 
       printSuccess(localFiles.length === 1 ? results[0] : results);

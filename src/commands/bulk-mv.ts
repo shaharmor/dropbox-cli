@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { rpc, rpcRaw, pollBatchJob } from "../lib/api";
-import { printSuccess, isHuman } from "../lib/output";
-import { log, logError } from "../lib/logger";
+import { printSuccess } from "../lib/output";
+import { log, logError, logHuman } from "../lib/logger";
 import type { ListFolderResult, BatchResult } from "../types";
 import { basename } from "path";
 
@@ -26,16 +26,35 @@ async function moveBatch(
     allow_ownership_transfer: false,
   });
 
+  let completed: BatchResult = result;
   if (result[".tag"] === "async_job_id") {
-    await pollBatchJob<BatchResult>(
+    completed = await pollBatchJob<BatchResult>(
       "files/move_batch/check_v2",
       result.async_job_id!,
       label
     );
   }
 
-  log(`[${label}] Done.`);
-  return paths.length;
+  let moved = 0;
+  const failed: string[] = [];
+  if (completed.entries) {
+    for (let i = 0; i < completed.entries.length; i++) {
+      const entry = completed.entries[i];
+      if (entry[".tag"] === "success") {
+        moved++;
+        logHuman(`  ✓ ${paths[i]}`);
+      } else {
+        failed.push(paths[i]);
+        logHuman(`  ✗ ${paths[i]} (${entry[".tag"]})`);
+      }
+    }
+  }
+
+  log(`[${label}] Done. ${moved}/${paths.length} moved.`);
+  if (failed.length > 0) {
+    logError(`[${label}] ${failed.length} file(s) failed to move.`);
+  }
+  return moved;
 }
 
 export function registerBulkMvCommand(program: Command): void {
@@ -88,11 +107,9 @@ Examples:
       async function dispatchBatch(batch: string[]): Promise<void> {
         batchNum++;
         const label = `batch ${batchNum}`;
-        if (isHuman()) {
-          logError(`${label}: moving ${batch.length} files (${totalMoved + 1}-${totalMoved + batch.length})...`);
-        }
-        totalMoved += batch.length;
-        await moveBatch(batch, dest, autorename, label);
+        logHuman(`${label}: moving ${batch.length} files...`);
+        const moved = await moveBatch(batch, dest, autorename, label);
+        totalMoved += moved;
       }
 
       async function flushReady(): Promise<void> {
@@ -117,17 +134,15 @@ Examples:
         for (const entry of result.entries) {
           totalListed++;
           if (entry[".tag"] === "file" && entry.name.startsWith(matchPrefix)) {
-            if (dryRun && isHuman()) {
-              logError(`  [dry-run] Would move: ${entry.path_display}`);
+            if (dryRun) {
+              logHuman(`  [dry-run] Would move: ${entry.path_display}`);
             }
             pending.push(entry.path_display);
             totalFound++;
           }
         }
 
-        if (isHuman()) {
-          logError(`Listed ${totalListed} entries, ${totalFound} matching...`);
-        }
+        logHuman(`Listed ${totalListed} entries, ${totalFound} matching...`);
 
         // Dispatch full batches while listing continues
         if (!dryRun) {
@@ -157,17 +172,16 @@ Examples:
         await Promise.all(inFlight);
       }
 
-      if (isHuman()) {
-        if (dryRun) {
-          logError(`\n${totalFound} files would be moved.`);
-        } else {
-          logError(`\nDone. Moved ${totalMoved} files to ${dest}.`);
-        }
+      if (dryRun) {
+        logHuman(`\n${totalFound} files would be moved.`);
+      } else {
+        logHuman(`\nDone. Moved ${totalMoved} files to ${dest}.`);
       }
 
       printSuccess({
         matched: totalFound,
         moved: dryRun ? 0 : totalMoved,
+        failed: dryRun ? 0 : totalFound - totalMoved,
         dry_run: dryRun,
         source,
         dest,

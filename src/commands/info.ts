@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { rpc } from "../lib/api";
-import { printSuccess, isHuman, formatBytes, formatDate } from "../lib/output";
-import { logError } from "../lib/logger";
+import { printSuccess, formatBytes, formatDate } from "../lib/output";
+import { logHuman } from "../lib/logger";
 import type { DropboxEntry } from "../types";
 
 export function registerInfoCommand(program: Command): void {
@@ -19,16 +19,14 @@ Examples:
         include_has_explicit_shared_members: true,
       });
 
-      if (isHuman()) {
-        logError(`Path: ${result.path_display}`);
-        logError(`Type: ${result[".tag"]}`);
-        logError(`Name: ${result.name}`);
-        if (result[".tag"] === "file") {
-          logError(`Size: ${formatBytes(result.size)}`);
-          logError(`Modified: ${formatDate(result.server_modified)}`);
-          logError(`Rev: ${result.rev}`);
-          logError(`Content hash: ${result.content_hash}`);
-        }
+      logHuman(`Path: ${result.path_display}`);
+      logHuman(`Type: ${result[".tag"]}`);
+      logHuman(`Name: ${result.name}`);
+      if (result[".tag"] === "file") {
+        logHuman(`Size: ${formatBytes(result.size)}`);
+        logHuman(`Modified: ${formatDate(result.server_modified)}`);
+        logHuman(`Rev: ${result.rev}`);
+        logHuman(`Content hash: ${result.content_hash}`);
       }
 
       printSuccess(result);

@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { rpc } from "../lib/api";
-import { printSuccess, isHuman } from "../lib/output";
-import { logError } from "../lib/logger";
+import { printSuccess } from "../lib/output";
+import { logHuman } from "../lib/logger";
 
 export function registerMkdirCommand(program: Command): void {
   program
@@ -20,9 +20,7 @@ Examples:
         }
       );
 
-      if (isHuman()) {
-        logError(`Created folder: ${(result.metadata as { path_display: string }).path_display}`);
-      }
+      logHuman(`Created folder: ${(result.metadata as { path_display: string }).path_display}`);
 
       printSuccess(result.metadata);
     });

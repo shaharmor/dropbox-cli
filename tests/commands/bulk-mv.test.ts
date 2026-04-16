@@ -168,7 +168,7 @@ describe("bulk-mv command", () => {
         has_more: false,
       })
       // move_batch response
-      .mockResolvedValueOnce({ ".tag": "complete", entries: [] });
+      .mockResolvedValueOnce({ ".tag": "complete", entries: [{ ".tag": "success" }, { ".tag": "success" }] });
 
     const program = new Command();
     registerBulkMvCommand(program);
@@ -280,7 +280,7 @@ describe("bulk-mv command", () => {
       cursor: "c",
       has_more: false,
     });
-    mockRpc.mockResolvedValueOnce({ ".tag": "complete", entries: [] });
+    mockRpc.mockResolvedValueOnce({ ".tag": "complete", entries: [{ ".tag": "success" }] });
 
     const program = new Command();
     registerBulkMvCommand(program);
@@ -346,7 +346,7 @@ describe("bulk-mv command", () => {
       cursor: "c",
       has_more: false,
     });
-    mockRpc.mockResolvedValueOnce({ ".tag": "complete", entries: [] });
+    mockRpc.mockResolvedValueOnce({ ".tag": "complete", entries: [{ ".tag": "success" }] });
 
     const program = new Command();
     registerBulkMvCommand(program);
@@ -363,6 +363,44 @@ describe("bulk-mv command", () => {
     // Should still proceed despite mkdir error
     expect(captured.success).toEqual(
       expect.objectContaining({ matched: 1, moved: 1 })
+    );
+  });
+
+  test("reports correct count when some files fail to move", async () => {
+    mockRpcRaw.mockResolvedValueOnce({ ok: true, status: 200, data: {} });
+
+    mockRpc.mockResolvedValueOnce({
+      entries: [
+        { ".tag": "file", name: "a.txt", path_display: "/S/a.txt" },
+        { ".tag": "file", name: "b.txt", path_display: "/S/b.txt" },
+        { ".tag": "file", name: "c.txt", path_display: "/S/c.txt" },
+      ],
+      cursor: "c",
+      has_more: false,
+    });
+    mockRpc.mockResolvedValueOnce({
+      ".tag": "complete",
+      entries: [
+        { ".tag": "success" },
+        { ".tag": "failure", failure: { ".tag": "to/conflict" } },
+        { ".tag": "success" },
+      ],
+    });
+
+    const program = new Command();
+    registerBulkMvCommand(program);
+    await program.parseAsync([
+      "node",
+      "test",
+      "bulk-mv",
+      "/S",
+      "/D",
+      "--match",
+      "",
+    ]);
+
+    expect(captured.success).toEqual(
+      expect.objectContaining({ matched: 3, moved: 2, failed: 1 })
     );
   });
 });

@@ -1,3 +1,5 @@
+import { isHuman } from "./output";
+
 let verbose = false;
 
 export function setVerbose(value: boolean): void {
@@ -12,4 +14,10 @@ export function log(...args: unknown[]): void {
 
 export function logError(...args: unknown[]): void {
   console.error(...args);
+}
+
+export function logHuman(...args: unknown[]): void {
+  if (isHuman()) {
+    console.error(...args);
+  }
 }

@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { rpc, pollBatchJob } from "../lib/api";
-import { printSuccess, printError, isHuman } from "../lib/output";
-import { logError } from "../lib/logger";
+import { printSuccess, printError } from "../lib/output";
+import { logHuman } from "../lib/logger";
 import type { DropboxEntry, BatchResult } from "../types";
 import { basename } from "path";
 
@@ -35,9 +35,7 @@ Examples:
           autorename,
         });
 
-        if (isHuman()) {
-          logError(`Copied to: ${result.metadata.path_display}`);
-        }
+        logHuman(`Copied to: ${result.metadata.path_display}`);
 
         printSuccess(result.metadata);
       } else {
@@ -53,15 +51,15 @@ Examples:
         });
 
         if (result[".tag"] === "async_job_id") {
-          if (isHuman()) logError("Batch copy in progress...");
+          logHuman("Batch copy in progress...");
           const completed = await pollBatchJob<BatchResult>(
             "files/copy_batch/check_v2",
             result.async_job_id!
           );
-          if (isHuman()) logError("Batch copy complete.");
+          logHuman("Batch copy complete.");
           printSuccess(completed.entries);
         } else {
-          if (isHuman()) logError("Batch copy complete.");
+          logHuman("Batch copy complete.");
           printSuccess(result.entries);
         }
       }
