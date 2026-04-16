@@ -18,3 +18,7 @@ test("hello world", () => {
   expect(1).toBe(1);
 });
 ```
+
+## Changelog
+
+Update `CHANGELOG.md` when making user-facing changes. Add entries under `## Unreleased` grouped by: Added, Fixed, Changed, Removed, Refactored.
