@@ -2,7 +2,7 @@ import { withCredentialStoreAsync } from "./config";
 import { authDeadline } from "./auth-coordination";
 import { log } from "./logger";
 import { printError } from "./output";
-import { CredentialError, type AuthRequestOptions, type CredentialSnapshot, type RequestOptions } from "../types";
+import { CredentialError, MachineError, type AuthRequestOptions, type CredentialSnapshot, type RequestOptions, type MachineMetadata } from "../types";
 
 const RPC_BASE = "https://api.dropboxapi.com/2";
 const CONTENT_BASE = "https://content.dropboxapi.com/2";
@@ -82,6 +82,7 @@ const READ_ENDPOINTS = new Set([
 ]);
 
 async function fetchWithRetry(url: string, init: RequestInit, options: RequestOptions = {}): Promise<Response> {
+  let dispatchedMutation = false;
   try {
     let auth = await getCredentialSnapshot(options);
     const secrets = [auth.access_token, auth.refresh_token];
@@ -94,7 +95,10 @@ async function fetchWithRetry(url: string, init: RequestInit, options: RequestOp
       const headers = new Headers(init.headers);
       headers.set("Authorization", `Bearer ${auth.access_token}`);
       log(`POST ${url}`);
-      const response = await fetch(url, { ...init, headers, signal: options.signal });
+      options.signal?.throwIfAborted();
+      dispatchedMutation = !read;
+      const pending = fetch(url, { ...init, headers, signal: options.signal });
+      const response = options.machine ? await waitForRequest(pending, options.signal) : await pending;
       log(`Response: ${response.status}`);
       responseSecrets.set(response, secrets);
       // Mutations never redispatch automatically, including after 401. A refreshed
@@ -112,12 +116,18 @@ async function fetchWithRetry(url: string, init: RequestInit, options: RequestOp
         const delay = response.status === 429 ? (Number.isFinite(requested) ? Math.max(0, Math.min(requested, 30)) : 1) : Math.min(2 ** retries, 16);
         retries++;
         await response.body?.cancel();
-        await Bun.sleep(delay * 1000);
+        if (options.machine) await machineRetryDelay(delay * 1000, options.signal);
+        else await Bun.sleep(delay * 1000);
         continue;
       }
       return response;
     }
   } catch (error) {
+    if (options.machine) {
+      if (dispatchedMutation) throw new MachineError("unknown_outcome", "Submission may have been applied. Reconcile without replaying.", { outcome: "unknown" });
+      if (error instanceof CredentialError || error instanceof MachineError) throw error;
+      throw new MachineError(options.signal?.aborted ? "cancelled" : "connection_error", "Read or pre-submission request could not be completed.");
+    }
     if (error instanceof CredentialError) printError(error.code, error.message, 2);
     printError("connection_error", "Dropbox request could not be completed.");
   }
@@ -184,6 +194,140 @@ export async function contentDownload(
   const resultMetadata = resultHeader ? JSON.parse(resultHeader) : {};
 
   return { metadata: resultMetadata, body: response.body! };
+}
+
+// Race even intercepted transports against cancellation; a timeout is never refusal evidence.
+export function waitForRequest<T>(pending: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return pending;
+  return new Promise((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener("abort", abort);
+    const abort = () => { cleanup(); reject(new MachineError("cancelled", "Operation cancelled.")); };
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+    pending.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
+  });
+}
+
+async function machineRetryDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await waitForRequest(new Promise<void>(resolve => { timer = setTimeout(resolve, milliseconds); }), signal);
+  } finally { clearTimeout(timer); }
+}
+
+const MACHINE_JSON_LIMIT = 2 * 1024 * 1024;
+async function boundedJSON(response: Response, options: RequestOptions): Promise<unknown> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new MachineError("invalid_response", "Missing Dropbox response body.");
+  let size = 0;
+  const chunks: Uint8Array[] = [];
+  try {
+    while (true) {
+      const { done, value } = await waitForRequest(reader.read(), options.signal);
+      if (done) break;
+      size += value.length;
+      if (size > MACHINE_JSON_LIMIT) throw new MachineError("invalid_response", "Dropbox response exceeded the machine bound.");
+      chunks.push(value);
+    }
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } finally { void reader.cancel().catch(() => {}); reader.releaseLock(); }
+}
+
+function boundedEvidence(value: unknown, secrets: readonly string[], depth = 0): unknown {
+  if (depth > 8) return "[TRUNCATED]";
+  if (typeof value === "string") return String(redactError(value, secrets)).slice(0, 512);
+  if (Array.isArray(value)) return value.slice(0, 16).map(item => boundedEvidence(item, secrets, depth + 1));
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).slice(0, 16).map(([key, item]) => [
+    String(redactError(key, secrets)).slice(0, 64), /token|secret|authorization/i.test(key) ? "[REDACTED]" : boundedEvidence(item, secrets, depth + 1),
+  ]));
+  return value;
+}
+
+async function machineResponse(response: Response, options: RequestOptions, mutation: boolean): Promise<unknown> {
+  let body: unknown;
+  try { body = await boundedJSON(response, options); }
+  catch {
+    throw new MachineError(mutation ? "unknown_outcome" : "invalid_response", "Dropbox returned an incomplete or invalid response.", {
+      outcome: mutation ? "unknown" : "not_submitted", http_status: response.status,
+    });
+  }
+  if (response.ok) return body;
+  const secrets = responseSecrets.get(response) ?? [];
+  const raw = body as { error?: unknown } | null;
+  let dropbox = boundedEvidence(raw?.error, secrets);
+  // Preserve nested tags within a fixed diagnostic budget, never an unbounded echo.
+  if (JSON.stringify(dropbox ?? null).length > 8192) dropbox = { ".tag": "truncated_error" };
+  const parsed = parseDropboxError(boundedEvidence(body, secrets));
+  const knownRefusal = [400, 401, 403, 409].includes(response.status) &&
+    !!raw?.error && typeof raw.error === "object" && typeof (raw.error as Record<string, unknown>)[".tag"] === "string";
+  throw new MachineError(mutation && !knownRefusal ? "unknown_outcome" : parsed.code.slice(0, 128),
+    mutation && !knownRefusal ? "Submission may have been applied. Reconcile without replaying." : parsed.message.slice(0, 512), {
+      outcome: mutation ? (knownRefusal ? "refused" : "unknown") : "not_submitted",
+      http_status: response.status,
+      request_id: String(redactError(response.headers.get("x-dropbox-request-id") ?? "", secrets)).slice(0, 256),
+      dropbox,
+    });
+}
+
+export async function machineRpc<T = unknown>(endpoint: string, body: Record<string, unknown>, options: RequestOptions): Promise<T> {
+  if (!options.expectedAccountId) throw new MachineError("invalid_args", "Expected account is required.");
+  // No caller can label a mutation as a read to enable automatic replay.
+  const mutation = !READ_ENDPOINTS.has(endpoint);
+  const request = { ...options, machine: true, retry: mutation ? "mutation" as const : "read" as const };
+  const response = await fetchWithRetry(`${RPC_BASE}/${endpoint}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  }, request);
+  return await machineResponse(response, request, mutation) as T;
+}
+
+export function exactPath(path: string): boolean {
+  return path.startsWith("/") && path.length > 1 && !path.includes("\0") &&
+    !path.split("/").slice(1).some(part => !part || part === "." || part === "..");
+}
+
+export function validateMetadata(value: unknown): MachineMetadata {
+  const data = value as MachineMetadata | null;
+  if (!data || !["file", "folder"].includes(data[".tag"]) || typeof data.id !== "string" || !data.id.startsWith("id:") ||
+      typeof data.name !== "string" || typeof data.path_lower !== "string" || !exactPath(data.path_lower) ||
+      typeof data.path_display !== "string" || !exactPath(data.path_display) ||
+      (data[".tag"] === "file" && (typeof data.rev !== "string" || !data.rev || !Number.isSafeInteger(data.size) || data.size! < 0))) {
+    throw new MachineError("invalid_response", "Dropbox metadata is missing identity, version or location evidence.");
+  }
+  return data;
+}
+
+export async function machineMetadata(path: string, options: RequestOptions): Promise<MachineMetadata> {
+  if (!(path.startsWith("id:") && path.length > 3) && !exactPath(path)) throw new MachineError("invalid_args", "Metadata requires an ID or exact non-root path.");
+  const result = validateMetadata(await machineRpc("files/get_metadata", {
+    path, include_has_explicit_shared_members: true,
+  }, options));
+  if (path.startsWith("id:") && result.id !== path) throw new MachineError("identity_mismatch", "Metadata does not match the requested ID.");
+  if (exactPath(path) && result.path_lower !== path.toLowerCase()) throw new MachineError("location_mismatch", "Metadata does not match the requested path.");
+  return result;
+}
+
+export function isNotFound(error: unknown): boolean {
+  if (!(error instanceof MachineError) || error.details.http_status !== 409) return false;
+  const data = error.details.dropbox as { ".tag"?: string; path?: { ".tag"?: string } } | undefined;
+  return data?.[".tag"] === "path" && data.path?.[".tag"] === "not_found";
+}
+
+export async function machineDownload(path: string, options: RequestOptions): Promise<{ metadata: Record<string, unknown>; body: ReadableStream<Uint8Array> }> {
+  if (!options.expectedAccountId) throw new MachineError("invalid_args", "Expected account is required.");
+  const response = await fetchWithRetry(`${CONTENT_BASE}/files/download`, {
+    method: "POST", headers: { "Dropbox-API-Arg": JSON.stringify({ path }) },
+  }, { ...options, machine: true, retry: "read" });
+  if (!response.ok) await machineResponse(response, options, false);
+  try {
+    const header = response.headers.get("Dropbox-API-Result");
+    if (!header || header.length > 16384 || !response.body) throw new Error();
+    const metadata = JSON.parse(header);
+    if (!metadata || typeof metadata !== "object") throw new Error();
+    return { metadata, body: response.body };
+  } catch {
+    void response.body?.cancel().catch(() => {});
+    throw new MachineError("invalid_response", "Missing or invalid download metadata.");
+  }
 }
 
 export async function pollBatchJob<T = unknown>(endpoint: string, asyncJobId: string, label?: string): Promise<T> {

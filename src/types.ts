@@ -22,6 +22,43 @@ export interface AuthRequestOptions {
 export interface RequestOptions extends AuthRequestOptions {
   // Unknown endpoints default to mutation safety; only known reads retry by default.
   retry?: "read" | "mutation";
+  // Machine callers receive bounded errors, including mutation dispatch evidence.
+  machine?: boolean;
+}
+
+export type MutationOutcome = "not_submitted" | "refused" | "unknown";
+export interface MachineErrorDetails {
+  outcome: MutationOutcome;
+  http_status?: number;
+  request_id?: string;
+  dropbox?: unknown;
+}
+
+export class MachineError extends Error {
+  constructor(public readonly code: string, message: string,
+    public readonly details: MachineErrorDetails = { outcome: "not_submitted" }) {
+    super(message);
+    this.name = "MachineError";
+  }
+}
+
+export interface MachineOptions {
+  expectedAccount?: string;
+  timeout?: string;
+}
+
+export interface MachineMetadata {
+  ".tag": "file" | "folder";
+  id: string;
+  name: string;
+  path_lower: string;
+  path_display: string;
+  rev?: string;
+  size?: number;
+  content_hash?: string;
+  // Informational only: moves do not gate on sharing context.
+  sharing_info?: Record<string, unknown>;
+  has_explicit_shared_members?: boolean;
 }
 
 export class CredentialError extends Error {

@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
-import { Command } from "commander";
+import { Command, CommanderError } from "commander";
 import { setVerbose } from "./lib/logger";
-import { setHumanMode } from "./lib/output";
+import { setHumanMode, printSuccess, printMachineError } from "./lib/output";
+import { MachineError } from "./types";
 import { registerAuthCommands } from "./commands/auth";
 import { registerBulkMvCommand } from "./commands/bulk-mv";
 import { registerCpCommand } from "./commands/cp";
@@ -15,6 +16,8 @@ import { registerShareCommand } from "./commands/share";
 import { registerUploadCommand } from "./commands/upload";
 
 const program = new Command();
+program.exitOverride();
+program.configureOutput({ writeErr: () => {} });
 
 program
   .name("dropbox-cli")
@@ -30,6 +33,12 @@ program.hook("preAction", (thisCommand) => {
   setHumanMode(opts.human ?? false);
 });
 
+program.command("capabilities")
+  .description("Describe the versioned viewer machine contract without authentication")
+  .action(() => printSuccess({ protocol_version: 1, capabilities: [
+    "account-status", "login-pkce", "list-page", "metadata", "download-original", "ensure-directory", "move-single",
+  ] }));
+
 // Register all commands (alphabetical order)
 registerAuthCommands(program);
 registerBulkMvCommand(program);
@@ -43,4 +52,10 @@ registerSearchCommand(program);
 registerShareCommand(program);
 registerUploadCommand(program);
 
-program.parse();
+try { await program.parseAsync(); }
+catch (error) {
+  if (!(error instanceof CommanderError && error.exitCode === 0)) {
+    printMachineError(error instanceof CommanderError
+      ? new MachineError("invalid_args", "Invalid command arguments. Use --help for usage.") : error);
+  }
+}
