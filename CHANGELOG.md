@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- Optional bounded `retry_after_seconds` machine-error timing evidence from valid Retry-After headers; it never changes mutation terminality or authorizes replay.
 - Versioned viewer capability handshake, explicit bounded nonrecursive listing pages, and account-bound machine metadata.
 - Revision-addressed original downloads to an explicit absolute output file, with exclusive streaming staging, identity/size/Dropbox-hash checks, existing-symlink rejection and no-replace publication.
 - Opt-in safe single-ID moves and exact destination creation, with account/folder/revision/location checks and structured confirmed, not-submitted, refused or unknown outcomes.

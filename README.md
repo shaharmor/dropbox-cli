@@ -288,6 +288,16 @@ Machine errors add `error.details.outcome`:
 | `refused` | This mutation received a structured Dropbox refusal (HTTP 400/401/403/409). Nested tags, HTTP status and request ID are retained. |
 | `unknown` | A dispatched mutation may have applied: transport loss, deadline/cancellation, ambiguous HTTP status, malformed acknowledgment or mismatching returned metadata. Code is `unknown_outcome`. |
 
+Machine errors may also include `error.details.retry_after_seconds`: nonnegative
+whole seconds from a valid `Retry-After` delta-seconds value or canonical IMF-fixdate
+HTTP-date, relative to response receipt (rounded up for dates; past dates yield 0).
+Headers over 128 characters, malformed values and unsafe millisecond-deadline
+overflow are omitted, not shortened to a retry cap. This field is **timing evidence
+only**: it never changes `outcome` or proves non-application, including for HTTP 429.
+Callers must persist the later of this delay and their local backoff, and honor it
+across restarts before an otherwise-authorized retry. Missing/invalid headers leave
+local backoff in effect; uncertain mutations still require read-only reconciliation.
+
 No machine mutation automatically retries, including on authentication loss, rate
 limits, server errors or timeouts. `--timeout` sets a 1–600 second operation deadline
 (default 120); SIGINT/SIGTERM cancel. A killed process or lost/malformed stdout

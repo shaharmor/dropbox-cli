@@ -31,6 +31,8 @@ export interface MachineErrorDetails {
   outcome: MutationOutcome;
   http_status?: number;
   request_id?: string;
+  // Timing only, never evidence that a mutation was not applied.
+  retry_after_seconds?: number;
   dropbox?: unknown;
 }
 

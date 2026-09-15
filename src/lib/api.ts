@@ -7,6 +7,7 @@ import { CredentialError, MachineError, type AuthRequestOptions, type Credential
 const RPC_BASE = "https://api.dropboxapi.com/2";
 const CONTENT_BASE = "https://content.dropboxapi.com/2";
 const responseSecrets = new WeakMap<Response, readonly string[]>();
+const responseReceivedAt = new WeakMap<Response, number>();
 
 function redactError(value: unknown, secrets: readonly string[]): unknown {
   if (typeof value === "string") {
@@ -99,6 +100,7 @@ async function fetchWithRetry(url: string, init: RequestInit, options: RequestOp
       dispatchedMutation = !read;
       const pending = fetch(url, { ...init, headers, signal: options.signal });
       const response = options.machine ? await waitForRequest(pending, options.signal) : await pending;
+      responseReceivedAt.set(response, Date.now());
       log(`Response: ${response.status}`);
       responseSecrets.set(response, secrets);
       // Mutations never redispatch automatically, including after 401. A refreshed
@@ -243,12 +245,31 @@ function boundedEvidence(value: unknown, secrets: readonly string[], depth = 0):
   return value;
 }
 
+function retryAfterSeconds(response: Response): number | undefined {
+  const raw = response.headers.get("Retry-After");
+  if (raw === null || raw.length > 128) return undefined;
+  const value = raw.trim(), received = responseReceivedAt.get(response) ?? Date.now();
+  let seconds: number;
+  if (/^\d+$/.test(value)) seconds = Number(value);
+  else {
+    // HTTP's canonical IMF-fixdate, not Date.parse's permissive ISO/natural-language forms.
+    if (!/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(value)) return undefined;
+    const date = Date.parse(value);
+    if (!Number.isFinite(date) || new Date(date).toUTCString() !== value) return undefined;
+    seconds = Math.max(0, Math.ceil((date - received) / 1000));
+  }
+  // Reject overflow rather than clamp to a shorter, unsafe provider deadline.
+  if (!Number.isSafeInteger(seconds) || seconds < 0 || seconds > (Number.MAX_SAFE_INTEGER - received) / 1000) return undefined;
+  return seconds;
+}
+
 async function machineResponse(response: Response, options: RequestOptions, mutation: boolean): Promise<unknown> {
+  const retry_after_seconds = retryAfterSeconds(response);
   let body: unknown;
   try { body = await boundedJSON(response, options); }
   catch {
     throw new MachineError(mutation ? "unknown_outcome" : "invalid_response", "Dropbox returned an incomplete or invalid response.", {
-      outcome: mutation ? "unknown" : "not_submitted", http_status: response.status,
+      outcome: mutation ? "unknown" : "not_submitted", http_status: response.status, retry_after_seconds,
     });
   }
   if (response.ok) return body;
@@ -264,6 +285,7 @@ async function machineResponse(response: Response, options: RequestOptions, muta
     mutation && !knownRefusal ? "Submission may have been applied. Reconcile without replaying." : parsed.message.slice(0, 512), {
       outcome: mutation ? (knownRefusal ? "refused" : "unknown") : "not_submitted",
       http_status: response.status,
+      retry_after_seconds,
       request_id: String(redactError(response.headers.get("x-dropbox-request-id") ?? "", secrets)).slice(0, 256),
       dropbox,
     });

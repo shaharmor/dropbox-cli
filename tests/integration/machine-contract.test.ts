@@ -114,6 +114,41 @@ test("lost ack, delayed application, HTTP errors and malformed success remain un
   expect(result(info).data.id).toBe('id:photo'); expect(result(info).data.outcome).toBeUndefined();
 }, 15000);
 
+test("Retry-After is bounded timing evidence, never refusal evidence or mutation replay permission", async () => {
+  for (const [header, expected] of [["3600", 3600], ["0", 0], [" 120 ", 120], [null, undefined], ["", undefined],
+    ["-1", undefined], ["1.5", undefined], ["NaN", undefined], ["Infinity", undefined], ["1e3", undefined],
+    ["9".repeat(100), undefined], ["9007199254740991", undefined], ["fake-A".repeat(50), undefined]] as const) {
+    const out = await cli(move, metadata + `globalThis.fetch=async(url,init)=>{
+      if(String(url).endsWith('/move_v2')){appendFileSync(join(root,'retry-submitted'),'once\\n');
+        return Response.json({error:{'.tag':'to',to:{'.tag':'conflict'}}},{status:409,headers:${JSON.stringify(header === null ? {} : {"Retry-After": header})}});}
+      return respond(url,init);};`);
+    expect(result(out).error.details.outcome).toBe('refused');
+    expect(result(out).error.details.retry_after_seconds).toBe(expected);
+    expect(out.stdout).not.toContain('fake-A');
+  }
+  const unknown = await cli(move, metadata + `globalThis.fetch=async(url,init)=>{
+    if(String(url).endsWith('/move_v2')){appendFileSync(join(root,'retry-submitted'),'once\\n');
+      return Response.json({error:{'.tag':'too_many_requests'}},{status:429,headers:{'Retry-After':'3600'}});}
+    return respond(url,init);};`);
+  expect(result(unknown).error.details).toMatchObject({outcome:'unknown',retry_after_seconds:3600});
+  expect(readFileSync(join(f.root,'retry-submitted'),'utf8').trim().split('\n')).toHaveLength(14);
+});
+
+test("Retry-After HTTP-date uses receipt time, and invalid date text is omitted", async () => {
+  const fixed = Date.UTC(2030, 0, 1);
+  for (const [header, expected] of [[new Date(fixed + 7200_000).toUTCString(), 7200], [new Date(fixed - 1000).toUTCString(), 0],
+    ['tomorrow', undefined], ['2030-01-01', undefined], ['Tue, 32 Jan 2030 00:00:00 GMT', undefined]] as const) {
+    const out = await cli(move, metadata + `Date.now=()=>${fixed};config.writeAuth({...fake,expires_at:${fixed / 1000 + 3600}});globalThis.fetch=async(url,init)=>{
+      if(String(url).endsWith('/move_v2'))return Response.json({error:{'.tag':'to'}},{status:409,headers:{'Retry-After':${JSON.stringify(header)}}});
+      return respond(url,init);};`);
+    expect(result(out).error.details.outcome).toBe('refused');
+    expect(result(out).error.details.retry_after_seconds).toBe(expected);
+  }
+  const malformed = await cli(move, metadata + `globalThis.fetch=async(url,init)=>String(url).endsWith('/move_v2')?
+    new Response('{broken',{status:409,headers:{'Retry-After':'120'}}):respond(url,init);`);
+  expect(result(malformed).error.details).toMatchObject({outcome:'unknown',retry_after_seconds:120});
+});
+
 test("safe mkdir inspects exact existing folder on conflict, never autorenames and propagates permissions", async () => {
   const args=['mkdir','/photos/deleted','--safe','--parent-id','id:photos','--expected-account','A'];
   const existing=await cli(args,metadata+`globalThis.fetch=respond;`);
