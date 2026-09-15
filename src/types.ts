@@ -11,6 +11,26 @@ export interface AuthData {
   account_email: string;
 }
 
+export type CredentialSnapshot = Readonly<AuthData & { generation: string }>;
+
+export interface AuthRequestOptions {
+  expectedAccountId?: string;
+  refreshTimeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+export interface RequestOptions extends AuthRequestOptions {
+  // Unknown endpoints default to mutation safety; only known reads retry by default.
+  retry?: "read" | "mutation";
+}
+
+export class CredentialError extends Error {
+  constructor(public readonly code: string, message: string) {
+    super(message);
+    this.name = "CredentialError";
+  }
+}
+
 export interface DropboxFile {
   ".tag": "file";
   name: string;

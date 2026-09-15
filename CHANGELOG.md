@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Account-bound credential snapshots for CLI transport callers, with noninteractive authentication errors.
+- `auth login --non-interactive` and `--timeout` options, plus cancellation on SIGINT/SIGTERM.
+
+### Fixed
+- Coordinate credential reads, refresh, login, logout, and cancellation across processes using Bun SQLite write transactions and bounded lock waits.
+- Persist owner-only credential JSON with atomic replacement and durable generation fences so stale authorization cannot resurrect logout or overwrite a newer login.
+- Validate OAuth state, retain PKCE, bind callbacks only to loopback, verify account identity, and close authorization resources on errors, cancellation, or timeout.
+- Keep in-flight requests bound to their original account and redact credential echoes in API errors.
+
+### Changed
+- Separate read retries and authentication recovery; mutations are not automatically redispatched after HTTP errors. App-credential replacement clears existing tokens before publishing the new configuration.
+
 ## [1.0.0] - 2026-04-16
 
 ### Added

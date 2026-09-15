@@ -1,91 +1,126 @@
-import { readConfig, readAuth, writeAuth } from "./config";
+import { withCredentialStoreAsync } from "./config";
+import { authDeadline } from "./auth-coordination";
 import { log } from "./logger";
-import { printError, printAuthError } from "./output";
-import type { AuthData } from "../types";
+import { printError } from "./output";
+import { CredentialError, type AuthRequestOptions, type CredentialSnapshot, type RequestOptions } from "../types";
 
 const RPC_BASE = "https://api.dropboxapi.com/2";
 const CONTENT_BASE = "https://content.dropboxapi.com/2";
+const responseSecrets = new WeakMap<Response, readonly string[]>();
 
-async function getValidAuth(): Promise<AuthData> {
-  const auth = readAuth();
-  if (!auth) {
-    printAuthError("Not authenticated. Run `dropbox-cli auth login` first.");
+function redactError(value: unknown, secrets: readonly string[]): unknown {
+  if (typeof value === "string") {
+    for (const secret of secrets) value = (value as string).split(secret).join("[REDACTED]");
+    return value;
   }
-
-  // Refresh if token expires within 5 minutes
-  if (auth.expires_at && Date.now() / 1000 > auth.expires_at - 300) {
-    await refreshToken(auth);
-    return readAuth()!;
+  if (Array.isArray(value)) return value.map(item => redactError(item, secrets));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactError(item, secrets)]));
   }
-
-  return auth;
+  return value;
 }
 
-async function refreshToken(auth: AuthData): Promise<void> {
-  const config = readConfig();
-  if (!config) {
-    printAuthError("No app credentials found. Run `dropbox-cli auth login` first.");
-  }
-
-  log("Refreshing access token...");
-
-  const response = await fetch("https://api.dropboxapi.com/oauth2/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: auth.refresh_token,
-      client_id: config.client_id,
-      client_secret: config.client_secret,
-    }),
-  });
-
-  if (!response.ok) {
-    printAuthError("Token refresh failed. Run `dropbox-cli auth login` to re-authenticate.");
-  }
-
-  const data = await response.json() as { access_token: string; expires_in: number };
-  auth.access_token = data.access_token;
-  auth.expires_at = Math.floor(Date.now() / 1000) + data.expires_in;
-  writeAuth(auth);
-  log("Token refreshed successfully");
+async function readError(response: Response): Promise<unknown> {
+  const body = await response.json().catch(() => null);
+  return redactError(body, responseSecrets.get(response) ?? []);
 }
 
-async function fetchWithRetry(url: string, options: RequestInit, retryCount = 0): Promise<Response> {
-  log(`POST ${url}`);
-  const response = await fetch(url, options);
-  log(`Response: ${response.status}`);
+async function failResponse(response: Response): Promise<never> {
+  if (response.status === 401) printError("auth_error", "Dropbox authentication was refused. Reconnect the account.", 2);
+  const { code, message } = parseDropboxError(await readError(response));
+  printError(code, message);
+}
 
-  // Rate limiting
-  if (response.status === 429 && retryCount < 5) {
-    const retryAfter = parseInt(response.headers.get("Retry-After") || "1", 10);
-    log(`Rate limited. Retrying after ${retryAfter}s (attempt ${retryCount + 1})`);
-    await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000));
-    return fetchWithRetry(url, options, retryCount + 1);
-  }
-
-  // Server errors — retry with exponential backoff
-  if (response.status >= 500 && retryCount < 5) {
-    const delay = Math.min(2 ** retryCount, 16);
-    log(`Server error ${response.status}. Retrying after ${delay}s (attempt ${retryCount + 1})`);
-    await new Promise((resolve) => setTimeout(resolve, delay * 1000));
-    return fetchWithRetry(url, options, retryCount + 1);
-  }
-
-  // Auth error — try refresh once
-  if (response.status === 401 && retryCount === 0) {
-    log("Got 401, attempting token refresh...");
-    const auth = readAuth();
-    if (auth) {
-      await refreshToken(auth);
-      const newAuth = readAuth()!;
-      const newHeaders = new Headers(options.headers);
-      newHeaders.set("Authorization", `Bearer ${newAuth.access_token}`);
-      return fetchWithRetry(url, { ...options, headers: newHeaders }, retryCount + 1);
+export async function getCredentialSnapshot(
+  options: AuthRequestOptions = {}, rejected?: CredentialSnapshot
+): Promise<CredentialSnapshot> {
+  return withCredentialStoreAsync(async store => {
+    const auth = store.snapshot();
+    if (!auth) throw new CredentialError("auth_error", "Not authenticated. Run `dropbox-cli auth login` first.");
+    const expected = options.expectedAccountId ?? rejected?.account_id;
+    if (expected !== undefined && auth.account_id !== expected) {
+      throw new CredentialError("account_mismatch", "Configured account does not match the requested account.");
     }
-  }
+    if (options.signal?.aborted) throw new CredentialError("auth_cancelled", "Authentication cancelled.");
+    const expired = Date.now() / 1000 >= auth.expires_at - 300;
+    if (!expired && (!rejected || rejected.generation !== auth.generation)) return auth;
+    const config = store.readConfig();
+    if (!config) throw new CredentialError("auth_error", "No app credentials found. Run `dropbox-cli auth login` first.");
+    const deadline = authDeadline(options.refreshTimeoutMs ?? 15000, options.signal);
+    try {
+      log("Refreshing access token...");
+      const response = await deadline.wait(fetch("https://api.dropboxapi.com/oauth2/token", {
+        method: "POST", signal: deadline.signal,
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: auth.refresh_token,
+          client_id: config.client_id, client_secret: config.client_secret }),
+      }));
+      if (!response.ok) throw new CredentialError("auth_error", "Token refresh failed. Reconnect the account.");
+      const data = await deadline.wait(response.json()) as { access_token?: unknown; expires_in?: unknown; account_id?: unknown };
+      if (!data || typeof data.access_token !== "string" || !data.access_token ||
+          typeof data.expires_in !== "number" || !Number.isFinite(data.expires_in) || data.expires_in <= 0 ||
+          (data.account_id !== undefined && data.account_id !== auth.account_id)) {
+        throw new CredentialError("auth_error", "Invalid token refresh response. Reconnect the account.");
+      }
+      deadline.signal.throwIfAborted();
+      store.writeAuth({ ...auth, access_token: data.access_token,
+        expires_at: Math.floor(Date.now() / 1000) + data.expires_in }, auth.generation);
+      return store.snapshot()!;
+    } catch (error) {
+      if (error instanceof CredentialError) throw error;
+      if (deadline.signal.aborted) throw deadline.signal.reason;
+      throw new CredentialError("connection_error", "Cannot refresh credentials. Check the connection and retry.");
+    } finally { deadline.close(); }
+  });
+}
 
-  return response;
+const READ_ENDPOINTS = new Set([
+  "files/list_folder", "files/list_folder/continue", "files/get_metadata",
+  "files/search_v2", "files/search/continue_v2", "users/get_current_account",
+  "files/download", "sharing/list_shared_links",
+  "files/copy_batch/check_v2", "files/move_batch/check_v2", "files/upload_session/finish_batch/check",
+]);
+
+async function fetchWithRetry(url: string, init: RequestInit, options: RequestOptions = {}): Promise<Response> {
+  try {
+    let auth = await getCredentialSnapshot(options);
+    const secrets = [auth.access_token, auth.refresh_token];
+    // Pin the original account even if the caller did not supply an expected account.
+    const bound = { ...options, expectedAccountId: auth.account_id };
+    const endpoint = url.replace(`${RPC_BASE}/`, "").replace(`${CONTENT_BASE}/`, "");
+    const read = (options.retry ?? (READ_ENDPOINTS.has(endpoint) ? "read" : "mutation")) === "read";
+    let retries = 0, recovered = false;
+    while (true) {
+      const headers = new Headers(init.headers);
+      headers.set("Authorization", `Bearer ${auth.access_token}`);
+      log(`POST ${url}`);
+      const response = await fetch(url, { ...init, headers, signal: options.signal });
+      log(`Response: ${response.status}`);
+      responseSecrets.set(response, secrets);
+      // Mutations never redispatch automatically, including after 401. A refreshed
+      // credential is not evidence that an earlier mutation was not applied.
+      if (!read) return response;
+      if (response.status === 401 && !recovered) {
+        recovered = true;
+        await response.body?.cancel();
+        auth = await getCredentialSnapshot(bound, auth);
+        secrets.push(auth.access_token, auth.refresh_token);
+        continue;
+      }
+      if ((response.status === 429 || response.status >= 500) && retries < 5) {
+        const requested = Number(response.headers.get("Retry-After") ?? "1");
+        const delay = response.status === 429 ? (Number.isFinite(requested) ? Math.max(0, Math.min(requested, 30)) : 1) : Math.min(2 ** retries, 16);
+        retries++;
+        await response.body?.cancel();
+        await Bun.sleep(delay * 1000);
+        continue;
+      }
+      return response;
+    }
+  } catch (error) {
+    if (error instanceof CredentialError) printError(error.code, error.message, 2);
+    printError("connection_error", "Dropbox request could not be completed.");
+  }
 }
 
 function parseDropboxError(body: unknown): { code: string; message: string } {
@@ -94,29 +129,21 @@ function parseDropboxError(body: unknown): { code: string; message: string } {
     const errorTag = (obj.error as Record<string, unknown>)?.[".tag"] as string | undefined;
     const summary = obj.error_summary as string | undefined;
     return {
-      code: errorTag || "api_error",
-      message: summary || "API request failed",
+      code: typeof errorTag === "string" && errorTag ? errorTag : "api_error",
+      message: typeof summary === "string" && summary ? summary : "API request failed",
     };
   }
   return { code: "api_error", message: "API request failed" };
 }
 
-export async function rpc<T = unknown>(endpoint: string, body: Record<string, unknown> = {}): Promise<T> {
-  const auth = await getValidAuth();
+export async function rpc<T = unknown>(endpoint: string, body: Record<string, unknown> = {}, options: RequestOptions = {}): Promise<T> {
   const response = await fetchWithRetry(`${RPC_BASE}/${endpoint}`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${auth.access_token}`,
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  });
+  }, options);
 
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => null);
-    const { code, message } = parseDropboxError(errorBody);
-    printError(code, message);
-  }
+  if (!response.ok) await failResponse(response);
 
   return response.json() as Promise<T>;
 }
@@ -124,46 +151,34 @@ export async function rpc<T = unknown>(endpoint: string, body: Record<string, un
 export async function contentUpload<T = unknown>(
   endpoint: string,
   metadata: Record<string, unknown>,
-  content: Uint8Array
+  content: Uint8Array,
+  options: RequestOptions = {}
 ): Promise<T> {
-  const auth = await getValidAuth();
   const response = await fetchWithRetry(`${CONTENT_BASE}/${endpoint}`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${auth.access_token}`,
       "Content-Type": "application/octet-stream",
       "Dropbox-API-Arg": JSON.stringify(metadata),
     },
     body: content as BodyInit,
-  });
+  }, { ...options, retry: "mutation" });
 
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => null);
-    const { code, message } = parseDropboxError(errorBody);
-    printError(code, message);
-  }
+  if (!response.ok) await failResponse(response);
 
   return response.json() as Promise<T>;
 }
 
 export async function contentDownload(
   endpoint: string,
-  metadata: Record<string, unknown>
+  metadata: Record<string, unknown>,
+  options: RequestOptions = {}
 ): Promise<{ metadata: Record<string, unknown>; body: ReadableStream<Uint8Array> }> {
-  const auth = await getValidAuth();
   const response = await fetchWithRetry(`${CONTENT_BASE}/${endpoint}`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${auth.access_token}`,
-      "Dropbox-API-Arg": JSON.stringify(metadata),
-    },
-  });
+    headers: { "Dropbox-API-Arg": JSON.stringify(metadata) },
+  }, options);
 
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => null);
-    const { code, message } = parseDropboxError(errorBody);
-    printError(code, message);
-  }
+  if (!response.ok) await failResponse(response);
 
   const resultHeader = response.headers.get("Dropbox-API-Result");
   const resultMetadata = resultHeader ? JSON.parse(resultHeader) : {};
@@ -195,21 +210,17 @@ export async function pollBatchJob<T = unknown>(endpoint: string, asyncJobId: st
   }
 }
 
-export async function rpcRaw(endpoint: string, body: Record<string, unknown> = {}): Promise<{
+export async function rpcRaw(endpoint: string, body: Record<string, unknown> = {}, options: RequestOptions = {}): Promise<{
   ok: boolean;
   status: number;
   data: unknown;
 }> {
-  const auth = await getValidAuth();
   const response = await fetchWithRetry(`${RPC_BASE}/${endpoint}`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${auth.access_token}`,
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  });
+  }, options);
 
-  const data = await response.json().catch(() => null);
+  const data = response.ok ? await response.json().catch(() => null) : await readError(response);
   return { ok: response.ok, status: response.status, data };
 }
