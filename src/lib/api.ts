@@ -1,5 +1,5 @@
 import { withCredentialStoreAsync } from "./config";
-import { authDeadline } from "./auth-coordination";
+import { authDeadline, MAX_REFRESH_MS } from "./auth-coordination";
 import { log } from "./logger";
 import { printError } from "./output";
 import { CredentialError, MachineError, type AuthRequestOptions, type CredentialSnapshot, type RequestOptions, type MachineMetadata } from "../types";
@@ -47,7 +47,9 @@ export async function getCredentialSnapshot(
     if (!expired && (!rejected || rejected.generation !== auth.generation)) return auth;
     const config = store.readConfig();
     if (!config) throw new CredentialError("auth_error", "No app credentials found. Run `dropbox-cli auth login` first.");
-    const deadline = authDeadline(options.refreshTimeoutMs ?? 15000, options.signal);
+    const refreshTimeoutMs = options.refreshTimeoutMs ?? MAX_REFRESH_MS;
+    if (refreshTimeoutMs > MAX_REFRESH_MS) throw new CredentialError("auth_timeout", "Refresh deadline exceeds the supported bound.");
+    const deadline = authDeadline(refreshTimeoutMs, options.signal);
     try {
       log("Refreshing access token...");
       const response = await deadline.wait(fetch("https://api.dropboxapi.com/oauth2/token", {
@@ -72,7 +74,7 @@ export async function getCredentialSnapshot(
       if (deadline.signal.aborted) throw deadline.signal.reason;
       throw new CredentialError("connection_error", "Cannot refresh credentials. Check the connection and retry.");
     } finally { deadline.close(); }
-  });
+  }, options.signal);
 }
 
 const READ_ENDPOINTS = new Set([
@@ -108,18 +110,38 @@ async function fetchWithRetry(url: string, init: RequestInit, options: RequestOp
       if (!read) return response;
       if (response.status === 401 && !recovered) {
         recovered = true;
-        await response.body?.cancel();
-        auth = await getCredentialSnapshot(bound, auth);
+        const refusal = options.machine ? await readAuthRefusal(response, options) : undefined;
+        if (!options.machine) void response.body?.cancel().catch(() => {});
+        options.signal?.throwIfAborted();
+        try { auth = await getCredentialSnapshot(bound, auth); }
+        catch (error) {
+          // This evidence belongs to the original read, not the token endpoint.
+          if (refusal && error instanceof CredentialError && error.code === "auth_error") throw refusal;
+          throw error;
+        }
         secrets.push(auth.access_token, auth.refresh_token);
         continue;
       }
       if ((response.status === 429 || response.status >= 500) && retries < 5) {
-        const requested = Number(response.headers.get("Retry-After") ?? "1");
-        const delay = response.status === 429 ? (Number.isFinite(requested) ? Math.max(0, Math.min(requested, 30)) : 1) : Math.min(2 ** retries, 16);
+        const retry_after_seconds = retryAfterSeconds(response);
+        // An invalid/overflowing provider minimum cannot safely become a shorter retry.
+        if (response.headers.has("Retry-After") && retry_after_seconds === undefined) return response;
+        const localDelay = response.status === 429 ? 1 : Math.min(2 ** retries, 16);
+        const delay = Math.max(localDelay, retry_after_seconds ?? 0);
         retries++;
-        await response.body?.cancel();
-        if (options.machine) await machineRetryDelay(delay * 1000, options.signal);
-        else await Bun.sleep(delay * 1000);
+        void response.body?.cancel().catch(() => {});
+        try {
+          await retryDelay(delay * 1000, options.signal);
+          options.signal?.throwIfAborted();
+        }
+        catch (error) {
+          if (options.machine && options.signal?.aborted) {
+            throw new MachineError("cancelled", "Operation cancelled.", {
+              outcome: "not_submitted", http_status: response.status, retry_after_seconds,
+            });
+          }
+          throw error;
+        }
         continue;
       }
       return response;
@@ -210,11 +232,17 @@ export function waitForRequest<T>(pending: Promise<T>, signal?: AbortSignal): Pr
   });
 }
 
-async function machineRetryDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await waitForRequest(new Promise<void>(resolve => { timer = setTimeout(resolve, milliseconds); }), signal);
-  } finally { clearTimeout(timer); }
+async function retryDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  const deadline = Math.ceil(performance.now()) + milliseconds;
+  let remaining = milliseconds;
+  // Runtime timers above signed 32-bit milliseconds can fire immediately instead.
+  while (remaining > 0) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await waitForRequest(new Promise<void>(resolve => { timer = setTimeout(resolve, Math.min(remaining, 2147483647)); }), signal);
+    } finally { clearTimeout(timer); }
+    remaining = Math.ceil(deadline - performance.now());
+  }
 }
 
 const MACHINE_JSON_LIMIT = 2 * 1024 * 1024;
@@ -281,14 +309,25 @@ async function machineResponse(response: Response, options: RequestOptions, muta
   const parsed = parseDropboxError(boundedEvidence(body, secrets));
   const knownRefusal = [400, 401, 403, 409].includes(response.status) &&
     !!raw?.error && typeof raw.error === "object" && typeof (raw.error as Record<string, unknown>)[".tag"] === "string";
-  throw new MachineError(mutation && !knownRefusal ? "unknown_outcome" : parsed.code.slice(0, 128),
-    mutation && !knownRefusal ? "Submission may have been applied. Reconcile without replaying." : parsed.message.slice(0, 512), {
+  const authRefusal = response.status === 401 && knownRefusal;
+  throw new MachineError(authRefusal ? "auth_error" : mutation && !knownRefusal ? "unknown_outcome" : parsed.code.slice(0, 128),
+    authRefusal ? "Dropbox authentication was refused. Reconnect the account." :
+      mutation && !knownRefusal ? "Submission may have been applied. Reconcile without replaying." : parsed.message.slice(0, 512), {
       outcome: mutation ? (knownRefusal ? "refused" : "unknown") : "not_submitted",
       http_status: response.status,
       retry_after_seconds,
       request_id: String(redactError(response.headers.get("x-dropbox-request-id") ?? "", secrets)).slice(0, 256),
       dropbox,
     });
+}
+
+async function readAuthRefusal(response: Response, options: RequestOptions): Promise<MachineError | undefined> {
+  // Optional diagnostics must not consume the entire recovery window on a stalled body.
+  const diagnostic = authDeadline(1000, options.signal);
+  try { await machineResponse(response, { ...options, signal: diagnostic.signal }, false); }
+  catch (error) {
+    if (error instanceof MachineError && error.code === "auth_error") return error;
+  } finally { diagnostic.close(); }
 }
 
 export async function machineRpc<T = unknown>(endpoint: string, body: Record<string, unknown>, options: RequestOptions): Promise<T> {

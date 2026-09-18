@@ -332,7 +332,7 @@ describe("bulk-mv command", () => {
     mockRpcRaw.mockResolvedValueOnce({
       ok: false,
       status: 409,
-      data: { error: { ".tag": "path/conflict/folder" } },
+      data: { error: { ".tag": "path", path: { ".tag": "conflict", conflict: { ".tag": "folder" } } } },
     });
 
     mockRpc.mockResolvedValueOnce({

@@ -203,7 +203,15 @@ account ID, never a token). Each request authenticates from an account-checked,
 frozen credential snapshot. Account changes cannot retarget it. `auth status`
 returns local account identity without tokens; `auth login --non-interactive`
 uses browser PKCE and never prompts on stdin. Missing app configuration is a
-structured setup error; the helper does not provision credentials.
+structured setup error; the helper does not provision credentials. Concurrent
+transport requests wait up to 17 seconds for asynchronous credential coordination,
+observing request cancellation, then reread the published snapshot. Network refresh
+has a 15-second deadline while holding the existing SQLite transaction; timeout
+never steals a live lock or changes the expected account. Synchronous local
+status/logout coordination retains its existing two-second fail-closed wait and
+can report a coordination timeout during a slow refresh. Normal SQLite sidecar
+removal during validation is rechecked within the same acquisition budget;
+unsafe ownership, symlinks, hardlinks and permission failures still fail closed.
 
 ### Commands and responses
 
@@ -288,6 +296,15 @@ Machine errors add `error.details.outcome`:
 | `refused` | This mutation received a structured Dropbox refusal (HTTP 400/401/403/409). Nested tags, HTTP status and request ID are retained. |
 | `unknown` | A dispatched mutation may have applied: transport loss, deadline/cancellation, ambiguous HTTP status, malformed acknowledgment or mismatching returned metadata. Code is `unknown_outcome`. |
 
+Structured HTTP 401 refusals use the stable `auth_error` code and sanitized
+reconnect guidance, retaining bounded provider tags and request IDs. A read may
+recover authentication once; a submitted mutation never refreshes or replays
+itself and retains `refused` terminality for a structured 401. If the one read
+recovery fails with `auth_error`, retained details describe the original read's
+401, not the token endpoint's response. Optional bounded first-401 diagnostics
+have a one-second collection limit; malformed/stalled diagnostics do not prevent
+otherwise-permitted recovery, and request cancellation still stops dispatch.
+
 Machine errors may also include `error.details.retry_after_seconds`: nonnegative
 whole seconds from a valid `Retry-After` delta-seconds value or canonical IMF-fixdate
 HTTP-date, relative to response receipt (rounded up for dates; past dates yield 0).
@@ -297,6 +314,17 @@ only**: it never changes `outcome` or proves non-application, including for HTTP
 Callers must persist the later of this delay and their local backoff, and honor it
 across restarts before an otherwise-authorized retry. Missing/invalid headers leave
 local backoff in effect; uncertain mutations still require read-only reconciliation.
+The helper's internal read retries for HTTP 429/5xx wait for the later of valid
+provider timing and local backoff, without a provider-delay cap or overflowing
+runtime timers. Cancellation/deadline during that wait returns `not_submitted`
+with the original HTTP status and provider timing, without another dispatch.
+A present but invalid/oversized/overflowing header stops internal retries and
+returns the provider response with timing omitted; an absent header uses bounded
+local backoff. This does not establish a known minimum for an invalid header.
+
+Legacy `bulk-mv` proceeds after failed destination creation only for a structured
+HTTP 409 existing-folder conflict. Authentication, throttling, server, malformed
+and other creation failures stop before listing or submitting any move batch.
 
 No machine mutation automatically retries, including on authentication loss, rate
 limits, server errors or timeouts. `--timeout` sets a 1–600 second operation deadline

@@ -12,6 +12,11 @@
 - `auth login --non-interactive` and `--timeout` options, plus cancellation on SIGINT/SIGTERM.
 
 ### Fixed
+- Honor valid Retry-After minimums on read retries, including HTTP-date and server errors, without timer overflow; preserve status/timing on cancellation and stop internal retries on malformed timing.
+- Report structured machine HTTP 401 refusals as stable `auth_error` with sanitized reconnect guidance and bounded provider details, without changing mutation terminality.
+- Abort `bulk-mv` before any moves when destination creation fails, except for a structured existing-folder conflict.
+- Allow concurrent transport requests to wait through the bounded refresh owner's lifetime, observe cancellation while contending, and reread the account-bound credential snapshot.
+- Revalidate normally removed SQLite sidecars during bounded credential acquisition instead of misclassifying journal unlink races as unsafe credentials; keep ownership, permission and link checks fail-closed.
 - Keep uncertain machine mutation outcomes distinct from authentication or connection refusals; never automatically replay a submitted move or folder creation.
 - Preserve bounded nested Dropbox error tags/request IDs with secret redaction in machine mode; malformed CLI arguments emit JSON rather than unhandled traces.
 - Coordinate credential reads, refresh, login, logout, and cancellation across processes using Bun SQLite write transactions and bounded lock waits.

@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import { rpc, rpcRaw, pollBatchJob } from "../lib/api";
-import { printSuccess } from "../lib/output";
+import { printError, printSuccess } from "../lib/output";
 import { log, logError, logHuman } from "../lib/logger";
 import type { ListFolderResult, BatchResult } from "../types";
 import { basename } from "path";
@@ -84,12 +84,19 @@ Examples:
       // Remove trailing * from match pattern if present (we use it as a prefix search)
       const matchPrefix = options.match.replace(/\*$/, "");
 
-      // Create destination folder up front (ignore error if it already exists)
+      // Only a structured folder conflict proves that creation can be skipped.
       if (!dryRun) {
         const mkdirResult = await rpcRaw("files/create_folder_v2", { path: dest, autorename: false });
         if (mkdirResult.ok) {
           log(`Created folder: ${dest}`);
         } else {
+          const error = (mkdirResult.data as { error?: { ".tag"?: string; path?: { ".tag"?: string; conflict?: { ".tag"?: string } } } } | null)?.error;
+          const folderExists = mkdirResult.status === 409 && error?.[".tag"] === "path" &&
+            error.path?.[".tag"] === "conflict" && error.path.conflict?.[".tag"] === "folder";
+          if (!folderExists) {
+            if (mkdirResult.status === 401) printError("auth_error", "Dropbox authentication was refused. Reconnect the account.", 2);
+            printError("destination_create_failed", "Destination creation failed or is uncertain. No files were moved; verify the destination before retrying.");
+          }
           log(`Destination folder ${dest} already exists`);
         }
       }

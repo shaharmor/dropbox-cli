@@ -247,6 +247,7 @@ test("401/429 mutation responses never refresh/retry, while malformed refusals r
   for(const status of [401,429,409]) {
     const out=await cli(move,metadata+`globalThis.fetch=async(url,init)=>{if(String(url).endsWith('/move_v2')){appendFileSync(join(root,'submitted'),'once\\n');return new Response('${status===401 ? '{"error":{".tag":"invalid_access_token"}}' : '{}'}',{status:${status}});}return respond(url,init);};`);
     expect(result(out).error.details.outcome).toBe(status===401?'refused':'unknown');
+    if(status===401) expect(result(out).error).toMatchObject({code:'auth_error',message:'Dropbox authentication was refused. Reconnect the account.',details:{http_status:401,dropbox:{'.tag':'invalid_access_token'}}});
   }
   expect(readFileSync(join(f.root,'submitted'),'utf8').trim().split('\n')).toHaveLength(3);
 });
@@ -272,7 +273,7 @@ test("read backoff deadline cancels the timer and exits promptly without another
   const started=Date.now();
   const out=await cli(['ls','--page','--expected-account','A','--timeout','1'],`globalThis.fetch=async()=>{appendFileSync(join(root,'backoff-dispatch'),'once\\n');return new Response('{}',{status:429,headers:{'Retry-After':'5'}});};`);
   const elapsed=Date.now()-started;
-  expect(result(out).error.code).toBe('cancelled');
+  expect(result(out).error).toMatchObject({code:'cancelled',details:{outcome:'not_submitted',http_status:429,retry_after_seconds:5}});
   expect(readFileSync(join(f.root,'backoff-dispatch'),'utf8')).toBe('once\n');
   expect(elapsed).toBeLessThan(2500);
 },10000);
@@ -283,7 +284,7 @@ test("SIGTERM during read backoff exits promptly and releases abort listeners", 
   while(!existsSync(join(f.root,'backoff-signal'))) {if(Date.now()>deadline)throw new Error('Fixture did not start');await Bun.sleep(10);}
   await Bun.sleep(100);
   const started=Date.now();worker.child.kill('SIGTERM');const out=await worker.result();
-  expect(result(out).error.code).toBe('cancelled');
+  expect(result(out).error).toMatchObject({code:'cancelled',details:{outcome:'not_submitted',http_status:429,retry_after_seconds:5}});
   expect(readFileSync(join(f.root,'backoff-signal'),'utf8')).toBe('once\n');
   expect(Date.now()-started).toBeLessThan(1500);
   const listeners=await f.run(`const c=new AbortController();let attached=0;const add=c.signal.addEventListener.bind(c.signal),remove=c.signal.removeEventListener.bind(c.signal);c.signal.addEventListener=(...args)=>{attached++;add(...args);};c.signal.removeEventListener=(...args)=>{attached--;remove(...args);};c.abort();await assert.rejects(()=>api.waitForRequest(new Promise(()=>{}),c.signal));assert.equal(attached,0);`);

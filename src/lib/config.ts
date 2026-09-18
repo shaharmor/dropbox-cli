@@ -114,8 +114,8 @@ function store(dir: string) {
 export function withCredentialStore<T>(operation: (value: ReturnType<typeof store>) => T): T {
   return coordinate(dir => operation(store(dir)));
 }
-export function withCredentialStoreAsync<T>(operation: (value: ReturnType<typeof store>) => Promise<T>): Promise<T> {
-  return coordinateAsync(dir => operation(store(dir)));
+export function withCredentialStoreAsync<T>(operation: (value: ReturnType<typeof store>) => Promise<T>, signal?: AbortSignal): Promise<T> {
+  return coordinateAsync(dir => operation(store(dir)), signal);
 }
 export function readConfig(): AppConfig | null { return withCredentialStore(value => value.readConfig()); }
 export function writeConfig(config: AppConfig, expectedGeneration?: string): string {

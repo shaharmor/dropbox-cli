@@ -1,14 +1,17 @@
 import { Database } from "bun:sqlite";
-import { closeSync, constants, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync } from "fs";
+import { closeSync, constants, fchmodSync, fstatSync, mkdirSync, openSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { CredentialError } from "../types";
 
 const LOCK_WAIT_MS = 2000;
+export const MAX_REFRESH_MS = 15000;
 
 export function configDirectory(): string {
   return process.env.DROPBOX_CLI_CONFIG_DIR || join(homedir(), ".dropbox-cli");
 }
+
+class UnlinkedFileError extends Error {}
 
 // No symlink following, permissive fallback, or raw filesystem diagnostics containing secrets.
 export function protectedOpen(path: string, directory = false): number {
@@ -16,8 +19,12 @@ export function protectedOpen(path: string, directory = false): number {
   try {
     const stat = fstatSync(fd);
     const required = directory ? 0o700 : 0o600;
-    if ((directory ? !stat.isDirectory() : !stat.isFile() || stat.nlink !== 1) ||
+    if ((directory ? !stat.isDirectory() : !stat.isFile()) ||
         (process.getuid && stat.uid !== process.getuid()) || (stat.mode & required) !== required) {
+      throw new Error("Unsafe credential permissions");
+    }
+    if (!directory && stat.nlink !== 1) {
+      if (stat.nlink === 0) throw new UnlinkedFileError();
       throw new Error("Unsafe credential permissions");
     }
     fchmodSync(fd, required);
@@ -39,7 +46,7 @@ export function ensureProtectedDirectory(): string {
   }
 }
 
-function openCoordination(): Database {
+function openCoordination(): Database | null {
   const dir = ensureProtectedDirectory();
   const path = join(dir, "auth-coordination.sqlite");
   try {
@@ -47,9 +54,14 @@ function openCoordination(): Database {
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
     closeSync(protectedOpen(path));
     for (const suffix of ["-journal", "-wal", "-shm"]) {
-      try { lstatSync(path + suffix); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
-      closeSync(protectedOpen(path + suffix));
+      try { closeSync(protectedOpen(path + suffix)); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        // SQLite can unlink a sidecar after open, before fstat. Revalidate its name
+        // on the next bounded acquisition attempt; never accept the detached inode.
+        if (error instanceof UnlinkedFileError) return null;
+        throw error;
+      }
     }
     const db = new Database(path, { create: false, strict: true });
     try { db.exec("PRAGMA busy_timeout = 0"); }
@@ -73,29 +85,40 @@ function timeout(): never {
 }
 
 export function coordinate<T>(operation: (dir: string) => T): T {
-  const db = openCoordination();
+  let db: Database | null = null;
   try {
     const deadline = performance.now() + LOCK_WAIT_MS;
-    while (!begin(db)) {
+    while (true) {
       if (performance.now() >= deadline) timeout();
+      db ??= openCoordination();
+      if (db && begin(db)) break;
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
     }
     // SQLite is only the OS-backed mutex. Generations live in atomically replaced JSON,
     // not in this transaction, so a crash/rollback cannot undo a published fence.
     return operation(configDirectory());
-  } finally { db.close(); }
+  } finally { db?.close(); }
 }
 
-export async function coordinateAsync<T>(operation: (dir: string) => Promise<T>): Promise<T> {
-  const db = openCoordination();
+export async function coordinateAsync<T>(operation: (dir: string) => Promise<T>, signal?: AbortSignal): Promise<T> {
+  const checkCancelled = () => {
+    if (signal?.aborted) throw new CredentialError("auth_cancelled", "Authentication cancelled.");
+  };
+  checkCancelled();
+  let db: Database | null = null;
   try {
-    const deadline = performance.now() + LOCK_WAIT_MS;
-    while (!begin(db)) {
+    // A live refresh owns the transaction for up to MAX_REFRESH_MS. Never steal it.
+    const deadline = performance.now() + MAX_REFRESH_MS + LOCK_WAIT_MS;
+    while (true) {
+      checkCancelled();
       if (performance.now() >= deadline) timeout();
+      db ??= openCoordination();
+      if (db && begin(db)) break;
       await Bun.sleep(10);
     }
+    checkCancelled();
     return await operation(configDirectory());
-  } finally { db.close(); }
+  } finally { db?.close(); }
 }
 
 export function authDeadline(timeoutMs: number, signal?: AbortSignal) {
