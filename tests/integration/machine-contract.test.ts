@@ -1,5 +1,5 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
-import { existsSync, readFileSync, readdirSync, realpathSync } from "fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "fs";
 import { join } from "path";
 import { pathToFileURL } from "url";
 import { fixture } from "../lib/auth-fixture";
@@ -234,7 +234,10 @@ for (const [name, status, error, code] of [
   expect(calls()).toEqual(mkdirCalls(true));
 });
 
-function downloadArgs(path: string) { return ['download','rev:r1','--output-file',path,'--expected-id','id:photo','--expected-account','A']; }
+function downloadArgs(path: string, expectedHash?: string) {
+  return ['download','rev:r1','--output-file',path,'--expected-id','id:photo','--expected-account','A',
+    ...(expectedHash === undefined ? [] : ['--expected-hash',expectedHash])];
+}
 const streamSetup=`
   const {createHash}=await import('node:crypto');
   const bytes=Buffer.alloc(5*1024*1024+17,42);
@@ -248,6 +251,117 @@ test("5 MiB Unicode original streams to exact absolute output with identity, Dro
   expect(out.exit).toBe(0); expect(result(out).data).toMatchObject({id:'id:photo',rev:'r1',size:5*1024*1024+17,local_path:path});
   expect(readFileSync(path)).toEqual(Buffer.alloc(5*1024*1024+17,42));
   expect(readdirSync(f.root).some(n=>n.endsWith('.part'))).toBe(false);
+});
+
+// Independent fixed vector: Dropbox hash of 5 MiB + 17 bytes, each byte 42.
+const recordedHash = '1c26179197372c1195e99c5d3437d4368048e6af8c981aa9363a329d23b27f17';
+function recordedDownloadSetup(path: string, changeMetadata = '', duringDownload = '') {
+  return streamSetup + `
+    const {readdirSync,lstatSync}=await import('node:fs');
+    const providerFetch=globalThis.fetch;
+    globalThis.fetch=async(url,init)=>{
+      const body=JSON.parse(new Headers(init.headers).get('Dropbox-API-Arg'));
+      appendFileSync(join(root,'requests'),JSON.stringify({endpoint:String(url).split('/2/')[1],body})+'\\n');
+      assert.equal(String(url),'https://content.dropboxapi.com/2/files/download');
+      assert.equal(init.method,'POST');
+      assert.equal(new Headers(init.headers).get('Authorization'),'Bearer fake-A');
+      assert.deepEqual(body,{path:'rev:r1'});
+      const output=${JSON.stringify(path)};
+      assert.equal(existsSync(output),false);
+      const stages=readdirSync(root).filter(n=>n.endsWith('.part'));
+      assert.equal(stages.length,1);
+      const stage=lstatSync(join(root,stages[0]));
+      assert.ok(stage.isFile());assert.equal(stage.mode & 0o777,0o600);
+      assert.equal(stage.size,0);assert.equal(stage.nlink,1);
+      writeFileSync(join(root,'download-stage'),stages[0]);
+      ${duringDownload}
+      const response=await providerFetch(url,init);
+      const returned=JSON.parse(response.headers.get('Dropbox-API-Result'));
+      ${changeMetadata}
+      return new Response(response.body,{headers:{'Dropbox-API-Result':JSON.stringify(returned)}});
+    };
+  `;
+}
+function expectRecordedDownloadCleanup() {
+  expect(calls()).toEqual([{endpoint:'files/download',body:{path:'rev:r1'}}]);
+  const stage=readFileSync(join(f.root,'download-stage'),'utf8');
+  expect(stage).toMatch(/^\.dropbox-[a-f0-9-]{36}\.part$/);
+  expect(existsSync(join(f.root,stage))).toBe(false);
+  expect(readdirSync(f.root).filter(n=>n.endsWith('.part'))).toEqual([]);
+}
+
+for(const [name, expectedHash, changeMetadata, duringDownload, code] of [
+  ['recorded/provider mismatch','0'.repeat(64),'','','identity_mismatch'],
+  ['missing provider hash',recordedHash,'delete returned.content_hash;','','identity_mismatch'],
+  ['different file ID',recordedHash,"returned.id='id:replacement';",'','identity_mismatch'],
+  ['different revision',recordedHash,"returned.rev='r2';",'','identity_mismatch'],
+  ['corrupt bytes despite matching metadata',recordedHash,'','bytes[0] ^= 1;','integrity_error'],
+]) test(`recorded --expected-hash rejects ${name} before publication and removes its staging file`, async () => {
+  const path=join(realpathSync(f.root),'original.HEIC');
+  const out=await cli(downloadArgs(path,expectedHash),recordedDownloadSetup(path,changeMetadata,duringDownload));
+  expect(out.exit).not.toBe(0);expect(out.stderr).toBe('');
+  expect(result(out)).toMatchObject({ok:false,error:{code}});
+  expect(existsSync(path)).toBe(false);
+  expectRecordedDownloadCleanup();
+});
+
+test("recorded --expected-hash match publishes only the exact verified original bytes", async () => {
+  const path=join(realpathSync(f.root),'照片 ; $(never).HEIC');
+  const out=await cli(downloadArgs(path,recordedHash),recordedDownloadSetup(path));
+  expect(out.exit).toBe(0);expect(out.stderr).toBe('');
+  expect(result(out)).toEqual({ok:true,data:{id:'id:photo',rev:'r1',content_hash:recordedHash,size:5*1024*1024+17,local_path:path}});
+  expect(readFileSync(path)).toEqual(Buffer.alloc(5*1024*1024+17,42));
+  expect(lstatSync(path).mode & 0o777).toBe(0o600);
+  expect(lstatSync(path).nlink).toBe(1);
+  expect(existsSync(join(f.root,'untrusted-name.jpg'))).toBe(false);
+  expectRecordedDownloadCleanup();
+});
+
+test("recorded --expected-hash malformed values fail before download dispatch", async () => {
+  const path=join(realpathSync(f.root),'original.HEIC');
+  for(const hash of ['', 'a'.repeat(63), 'a'.repeat(65), recordedHash.toUpperCase(), 'g'.repeat(64), ' '+recordedHash, recordedHash+'\n']) {
+    const out=await cli(downloadArgs(path,hash),recordedDownloadSetup(path));
+    expect(out.exit).not.toBe(0);expect(out.stderr).toBe('');
+    expect(result(out)).toMatchObject({ok:false,error:{code:'invalid_args',details:{outcome:'not_submitted'}}});
+    expect(calls()).toEqual([]);
+    expect(existsSync(path)).toBe(false);
+    expect(existsSync(join(f.root,'download-stage'))).toBe(false);
+    expect(readdirSync(f.root).filter(n=>n.endsWith('.part'))).toEqual([]);
+  }
+});
+
+test("recorded --expected-hash never overwrites an existing output or dispatches its download", async () => {
+  const path=join(realpathSync(f.root),'original.HEIC');
+  writeFileSync(path,'keep');const before=lstatSync(path);
+  const out=await cli(downloadArgs(path,recordedHash),recordedDownloadSetup(path));
+  expect(out.exit).not.toBe(0);expect(out.stderr).toBe('');
+  expect(result(out)).toMatchObject({ok:false,error:{code:'output_exists',details:{outcome:'not_submitted'}}});
+  expect(readFileSync(path,'utf8')).toBe('keep');
+  expect(lstatSync(path).ino).toBe(before.ino);
+  expect(calls()).toEqual([]);
+  expect(existsSync(join(f.root,'download-stage'))).toBe(false);
+  expect(readdirSync(f.root).filter(n=>n.endsWith('.part'))).toEqual([]);
+});
+
+test("recorded --expected-hash preserves a publication collision and removes its staging file", async () => {
+  const path=join(realpathSync(f.root),'original.HEIC');
+  const out=await cli(downloadArgs(path,recordedHash),recordedDownloadSetup(path,'',"writeFileSync(output,'keep',{flag:'wx'});"));
+  expect(out.exit).not.toBe(0);expect(out.stderr).toBe('');
+  expect(result(out)).toMatchObject({ok:false,error:{code:'output_exists'}});
+  expect(readFileSync(path,'utf8')).toBe('keep');
+  expectRecordedDownloadCleanup();
+});
+
+test("recorded --expected-hash does not bypass the account fence before dispatch", async () => {
+  const path=join(realpathSync(f.root),'original.HEIC');
+  const args=downloadArgs(path,recordedHash);
+  args[args.indexOf('--expected-account')+1]='B';
+  const out=await cli(args,recordedDownloadSetup(path));
+  expect(out.exit).not.toBe(0);expect(out.stderr).toBe('');
+  expect(result(out)).toMatchObject({ok:false,error:{code:'account_mismatch',details:{outcome:'not_submitted'}}});
+  expect(calls()).toEqual([]);
+  expect(existsSync(path)).toBe(false);
+  expect(readdirSync(f.root).filter(n=>n.endsWith('.part'))).toEqual([]);
 });
 
 test("download rejects pre-existing outputs/symlink ancestors and relative or multiple sources before network", async () => {

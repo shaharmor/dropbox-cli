@@ -28,7 +28,7 @@ export function fixture() {
     `);
     const child = Bun.spawn([process.execPath, script], {
       cwd: root,
-      env: { HOME: root, DROPBOX_CLI_CONFIG_DIR: join(root, "config"), PATH: process.env.PATH },
+      env: { HOME: root, DROPBOX_CLI_CONFIG_DIR: join(root, "config"), TMPDIR: root, PATH: process.env.PATH },
       stdout: "pipe", stderr: "pipe",
     });
     children.push(child);
