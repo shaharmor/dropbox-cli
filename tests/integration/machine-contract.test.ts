@@ -36,6 +36,37 @@ async function cli(args: string[], setup = "", seeded = true) {
 function result(out: {stdout: string}) { return JSON.parse(out.stdout); }
 function calls() { return existsSync(join(f.root,"requests")) ? readFileSync(join(f.root,"requests"),"utf8").trim().split("\n").map(line=>JSON.parse(line)) : []; }
 
+const mkdir = ['mkdir','/Photos/deleted','--safe','--parent-id','id:photos','--expected-account','A'];
+const deletedMetadata = {'.tag':'folder',id:'id:deleted',name:'deleted',path_lower:'/photos/deleted',path_display:'/Photos/deleted'};
+const folderConflict = `return Response.json({error:{'.tag':'path',path:{'.tag':'conflict',conflict:{'.tag':'folder'}},echo:'fake-A fake-refresh',access_token:'secret-echo',bounded:'x'.repeat(1024)},error_summary:'create refused fake-A fake-refresh'},{status:409,headers:{'x-dropbox-request-id':'create-request-fake-A','Retry-After':'120'}});`;
+function mkdirSetup(create: string, verification = 'return Response.json(deleted);', initial = 'return absent();') {
+  return metadata + `let submitted=false;globalThis.fetch=async(url,init)=>{
+    if(String(url)==='https://api.dropboxapi.com/oauth2/token') {
+      appendFileSync(join(root,'requests'),JSON.stringify({endpoint:'oauth2/token',body:{}})+'\\n');
+      return Response.json({error:'invalid_grant'},{status:400});
+    }
+    const endpoint=String(url).split('/2/')[1],body=JSON.parse(init.body || '{}');
+    appendFileSync(join(root,'requests'),JSON.stringify({endpoint,body})+'\\n');
+    assert.equal(new Headers(init.headers).get('Authorization'),'Bearer fake-A');
+    if(endpoint==='files/get_metadata') {
+      if(body.path==='/photos')return Response.json(parent);
+      if(body.path==='/photos/deleted'){if(!submitted){${initial}}${verification}}
+    }
+    if(endpoint==='files/create_folder_v2') {
+      assert.equal(submitted,false,'Folder creation must not replay');submitted=true;
+      assert.deepEqual(body,{path:'/Photos/deleted',autorename:false});${create}
+    }
+    throw new Error('Denied endpoint');
+  };`;
+}
+function mkdirCalls(submitted: boolean, verified = false, refreshed = false) {
+  const read = (path: string) => ({endpoint:'files/get_metadata',body:{path,include_has_explicit_shared_members:true}});
+  return [read('/photos'),read('/photos/deleted'),
+    ...(submitted ? [{endpoint:'files/create_folder_v2',body:{path:'/Photos/deleted',autorename:false}}] : []),
+    ...(verified ? [read('/photos/deleted')] : []),
+    ...(refreshed ? [{endpoint:'oauth2/token',body:{}}] : [])];
+}
+
 test("capabilities advertise only implemented viewer contracts without authentication", async () => {
   const out = await cli(["capabilities"], "", false);
   expect(out.exit).toBe(0);
@@ -149,14 +180,58 @@ test("Retry-After HTTP-date uses receipt time, and invalid date text is omitted"
   expect(result(malformed).error.details).toMatchObject({outcome:'unknown',retry_after_seconds:120});
 });
 
-test("safe mkdir inspects exact existing folder on conflict, never autorenames and propagates permissions", async () => {
-  const args=['mkdir','/photos/deleted','--safe','--parent-id','id:photos','--expected-account','A'];
-  const existing=await cli(args,metadata+`globalThis.fetch=respond;`);
-  expect(existing.exit).toBe(0); expect(result(existing).data).toMatchObject({created:false,metadata:{id:'id:deleted'}});
-  const create=await cli(args,metadata+`let made=false;globalThis.fetch=async(url,init)=>{const b=JSON.parse(init.body);if(String(url).endsWith('/create_folder_v2')){assert.equal(b.autorename,false);made=true;return Response.json({metadata:deleted});}if(b.path==='/photos/deleted'&&!made)return absent();return respond(url,init);};`);
-  expect(create.exit).toBe(0); expect(result(create).data.created).toBe(true);
-  const denied=await cli(args,metadata+`globalThis.fetch=async(url,init)=>{if(String(url).endsWith('/create_folder_v2'))return Response.json({error:{'.tag':'path',path:{'.tag':'no_write_permission'}}},{status:409});if(JSON.parse(init.body).path==='/photos/deleted')return absent();return respond(url,init);};`);
-  expect(result(denied).error.details).toMatchObject({outcome:'refused',dropbox:{path:{'.tag':'no_write_permission'}}});
+test("safe mkdir refuses a same-path replacement parent ID before creation dispatch", async () => {
+  const out=await cli(mkdir,mkdirSetup("throw new Error('Unexpected creation');")+`parent.id='id:replacement';`);
+  expect(out.exit).not.toBe(0);
+  expect(result(out).error).toMatchObject({code:'folder_drift',details:{outcome:'not_submitted'}});
+  expect(calls()).toEqual(mkdirCalls(false).slice(0,1));
+  expect(calls().filter(c=>c.endpoint==='files/create_folder_v2')).toHaveLength(0);
+});
+
+test("safe mkdir remains account-bound before any dispatch", async () => {
+  const out=await cli([...mkdir.slice(0,-1),'B'],mkdirSetup("throw new Error('Unexpected creation');"));
+  expect(out.exit).not.toBe(0);
+  expect(result(out).error).toMatchObject({code:'account_mismatch',details:{outcome:'not_submitted'}});
+  expect(calls()).toEqual([]);
+});
+
+test("safe mkdir verifies the exact existing folder without creation", async () => {
+  const out=await cli(mkdir,mkdirSetup("throw new Error('Unexpected creation');",'', 'return Response.json(deleted);'));
+  expect(out.exit).toBe(0);
+  expect(result(out)).toEqual({ok:true,data:{created:false,metadata:deletedMetadata}});
+  expect(calls()).toEqual(mkdirCalls(false));
+});
+
+for (const [name, verification] of [
+  ['connection failure',"throw new Error('fake-A fake-refresh connection lost');"],
+  ['authentication failure',"return Response.json({error:{'.tag':'invalid_access_token'},error_summary:'verification fake-A'},{status:401,headers:{'x-dropbox-request-id':'verify-request','Retry-After':'999'}});"],
+  ['not found','return absent();'],
+  ['malformed JSON',"return new Response('{broken');"],
+  ['malformed metadata',"return Response.json({'.tag':'folder',id:'id:deleted'});"],
+  ['wrong location',"return Response.json({...deleted,path_lower:'/elsewhere/deleted'});"],
+  ['file instead of folder',"return Response.json({...photo,path_lower:'/photos/deleted',path_display:'/Photos/deleted'});"],
+  ['verification timeout','await new Promise(()=>{});'],
+]) test(`safe mkdir retains the create refusal when conflict verification has ${name}`, async () => {
+  const out=await cli([...mkdir,'--timeout','1'],mkdirSetup(folderConflict,verification));
+  expect(calls()).toEqual(mkdirCalls(true,true,name==='authentication failure'));
+  expect(out.exit).not.toBe(0);
+  expect(result(out)).toEqual({ok:false,error:{code:'path',message:'create refused [REDACTED] [REDACTED]',details:{
+    outcome:'refused',http_status:409,request_id:'create-request-[REDACTED]',retry_after_seconds:120,
+    dropbox:{'.tag':'path',path:{'.tag':'conflict',conflict:{'.tag':'folder'}},echo:'[REDACTED] [REDACTED]',access_token:'[REDACTED]',bounded:'x'.repeat(512)},
+  }}});
+  expect(out.stdout.length).toBeLessThan(16384);expect(out.stderr).toBe('');
+  for(const secret of ['fake-A','fake-refresh','secret-echo','verify-request'])expect(out.stdout).not.toContain(secret);
+});
+
+for (const [name, status, error, code] of [
+  ['permission denial',409,{'.tag':'path',path:{'.tag':'no_write_permission'}},'path'],
+  ['file conflict',409,{'.tag':'path',path:{'.tag':'conflict',conflict:{'.tag':'file'}}},'path'],
+  ['authentication refusal',401,{'.tag':'invalid_access_token'},'auth_error'],
+] as const) test(`safe mkdir preserves definitive ${name} without conflict inspection or replay`, async () => {
+  const out=await cli(mkdir,mkdirSetup(`return Response.json({error:${JSON.stringify(error)}},{status:${status},headers:{'x-dropbox-request-id':'create-request','Retry-After':'120'}});`));
+  expect(out.exit).not.toBe(0);
+  expect(result(out).error).toMatchObject({code,details:{outcome:'refused',http_status:status,request_id:'create-request',retry_after_seconds:120,dropbox:error}});
+  expect(calls()).toEqual(mkdirCalls(true));
 });
 
 function downloadArgs(path: string) { return ['download','rev:r1','--output-file',path,'--expected-id','id:photo','--expected-account','A']; }
@@ -201,12 +276,12 @@ test("stream errors, integrity mismatch, cancellation and publication collision 
   }
 },15000);
 
-test("safe creation accepts the provider's untagged FolderMetadata; folder races inspect only after terminal conflict", async () => {
-  const args=['mkdir','/photos/deleted','--safe','--parent-id','id:photos','--expected-account','A'];
-  for(const race of [false,true]) {
-    const out=await cli(args,metadata+`let submitted=false;globalThis.fetch=async(url,init)=>{const b=JSON.parse(init.body);if(String(url).endsWith('/create_folder_v2')){assert.equal(submitted,false);submitted=true;${race ? "return Response.json({error:{'.tag':'path',path:{'.tag':'conflict',conflict:{'.tag':'folder'}}}},{status:409});" : "const {['.tag']:tag,...folder}=deleted;return Response.json({metadata:folder});"}}if(b.path==='/photos/deleted'&&!submitted)return absent();return respond(url,init);};`);
-    expect(out.exit).toBe(0); expect(result(out).data).toMatchObject({created:!race,metadata:{'.tag':'folder',id:'id:deleted'}});
-  }
+for(const race of [false,true]) test(`safe mkdir ${race ? 'verifies the exact folder after terminal folder conflict' : "accepts a newly created folder with the provider's untagged FolderMetadata"}`, async () => {
+  const create = race ? folderConflict : "const {['.tag']:tag,...folder}=deleted;return Response.json({metadata:folder});";
+  const out=await cli(mkdir,mkdirSetup(create));
+  expect(out.exit).toBe(0);
+  expect(result(out)).toEqual({ok:true,data:{created:!race,metadata:deletedMetadata}});
+  expect(calls()).toEqual(mkdirCalls(true,race));
 });
 
 test("restore uses the same checked ID path and leaves collisions unresolved", async () => {
@@ -225,12 +300,26 @@ test("server-applied lost acknowledgment remains unknown and a later read observ
   expect(readFileSync(join(f.root,'submitted'),'utf8')).toBe('once\n');
 });
 
-test("mkdir uncertainty is not converted into success or retried; file conflicts do not become folders", async () => {
-  const args=['mkdir','/photos/deleted','--safe','--parent-id','id:photos','--expected-account','A'];
-  const lost=await cli(args,metadata+`globalThis.fetch=async(url,init)=>{if(String(url).endsWith('/create_folder_v2')){appendFileSync(join(root,'created'),'once\\n');throw new Error('ack lost');}if(JSON.parse(init.body).path==='/photos/deleted')return absent();return respond(url,init);};`);
-  expect(result(lost).error.details.outcome).toBe('unknown'); expect(readFileSync(join(f.root,'created'),'utf8')).toBe('once\n');
-  const conflict=await cli(args,metadata+`globalThis.fetch=async(url,init)=>JSON.parse(init.body).path==='/photos/deleted'?Response.json({...photo,path_lower:'/photos/deleted'}):respond(url,init);`);
-  expect(result(conflict).error.code).toBe('destination_conflict');
+for(const [name, create] of [
+  ['lost acknowledgment',"throw new Error('fake-A ack lost');"],
+  ['timeout','await new Promise(()=>{});'],
+  ['server error',"return Response.json({error:{'.tag':'internal_error'}},{status:503});"],
+  ['malformed conflict',"return new Response('{broken',{status:409});"],
+  ['malformed success',"return Response.json({metadata:{id:'id:deleted'}});"],
+  ['wrong created location',"return Response.json({metadata:{...deleted,path_lower:'/elsewhere/deleted'}});"],
+]) test(`safe mkdir ${name} remains unknown without inspection or replay`, async () => {
+  const out=await cli([...mkdir,'--timeout','1'],mkdirSetup(create));
+  expect(out.exit).not.toBe(0);
+  expect(result(out).error).toMatchObject({code:'unknown_outcome',details:{outcome:'unknown'}});
+  expect(out.stdout).not.toContain('fake-A');
+  expect(calls()).toEqual(mkdirCalls(true));
+});
+
+test("safe mkdir rejects an existing file without creation", async () => {
+  const out=await cli(mkdir,mkdirSetup("throw new Error('Unexpected creation');",'',"return Response.json({...photo,path_lower:'/photos/deleted',path_display:'/Photos/deleted'});"));
+  expect(out.exit).not.toBe(0);
+  expect(result(out).error).toMatchObject({code:'destination_conflict',details:{outcome:'not_submitted'}});
+  expect(calls()).toEqual(mkdirCalls(false));
 });
 
 test("machine download transport itself requires an expected account before dispatch", async () => {

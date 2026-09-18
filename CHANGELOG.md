@@ -12,6 +12,7 @@
 - `auth login --non-interactive` and `--timeout` options, plus cancellation on SIGINT/SIGTERM.
 
 ### Fixed
+- Preserve safe mkdir's authoritative creation refusal when follow-up existing-folder verification fails; report `created: false` only after verifying exact folder metadata.
 - Honor valid Retry-After minimums on read retries, including HTTP-date and server errors, without timer overflow; preserve status/timing on cancellation and stop internal retries on malformed timing.
 - Report structured machine HTTP 401 refusals as stable `auth_error` with sanitized reconnect guidance and bounded provider details, without changing mutation terminality.
 - Abort `bulk-mv` before any moves when destination creation fails, except for a structured existing-folder conflict.

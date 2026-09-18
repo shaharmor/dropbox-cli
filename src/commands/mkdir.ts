@@ -33,7 +33,10 @@ Examples:
         catch (error) {
           if (error instanceof MachineError && error.details.outcome === "refused" && error.details.http_status === 409) {
             const data = error.details.dropbox as { ".tag"?: string; path?: { ".tag"?: string; conflict?: { ".tag"?: string } } };
-            if (data?.[".tag"] === "path" && data.path?.[".tag"] === "conflict" && data.path.conflict?.[".tag"] === "folder") return inspect();
+            if (data?.[".tag"] === "path" && data.path?.[".tag"] === "conflict" && data.path.conflict?.[".tag"] === "folder") {
+              // A failed verification read cannot replace the authoritative creation refusal.
+              try { return await inspect(); } catch { throw error; }
+            }
           }
           throw error;
         }
