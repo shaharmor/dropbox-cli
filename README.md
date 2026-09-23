@@ -261,9 +261,13 @@ dropbox-cli mv id:PHOTO /Photos/deleted/IMG_2.jpg --safe \
   reviewed revision/source location, both parent identities/locations, and target
   vacancy before one `files/move_v2` submission with `autorename: false` and
   `allow_ownership_transfer: false`. File and folder collisions remain unresolved.
-  Success is `{outcome: "confirmed", metadata}` only when returned ID/revision/path
-  match. Restore uses the same command with reversed parent IDs and recorded paths.
-  The viewer owns its selected-folder/`deleted` relationship and durable journal;
+  Success is `{outcome: "confirmed", metadata}` only when the returned ID, destination,
+  size and content hash match the preflight file. Dropbox may assign a new revision
+  to unchanged content when moving it; consumers must retain `metadata.rev` for the
+  next move or restore. Without a source content hash, a changed revision remains
+  unknown. Restore uses the same command with reversed parent IDs, recorded paths
+  and the confirmed current revision. The viewer owns its selected-folder/`deleted`
+  relationship and session state;
   the helper exposes no delete or remote cleanup operation.
 
 ### Sharing policy — explicit owner override

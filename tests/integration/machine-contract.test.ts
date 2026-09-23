@@ -116,6 +116,41 @@ test("safe single move submits ID once with no overwrite/ownership transfer, inc
   expect(calls().every(c=>['files/get_metadata','files/move_v2'].includes(c.endpoint))).toBe(true);
 });
 
+test("safe move confirms a new revision only when the same file content reaches the exact destination", async () => {
+  const out = await cli(move, metadata + `photo.content_hash='a'.repeat(64);globalThis.fetch=async(url,init)=>{
+    if(String(url).endsWith('/move_v2')) {
+      appendFileSync(join(root,'mutations'),'once\\n');
+      return Response.json({metadata:{...photo,rev:'r2',path_lower:'/photos/deleted/img_2.jpg',path_display:'/photos/deleted/IMG_2.jpg'}});
+    }
+    return respond(url,init);
+  };`);
+  expect(out.exit).toBe(0);
+  expect(result(out).data).toMatchObject({outcome:'confirmed',metadata:{id:'id:photo',rev:'r2',content_hash:'a'.repeat(64),size:3}});
+  expect(readFileSync(join(f.root,'mutations'),'utf8')).toBe('once\n');
+});
+
+test("move revision changes never excuse changed, missing or unverifiable content and identity", async () => {
+  for (const mismatch of ["content_hash:'b'.repeat(64)", "content_hash:undefined", "size:4", "id:'id:other'", "path_lower:'/elsewhere/img_2.jpg'", "rev:''"]) {
+    const out = await cli(move, metadata + `photo.content_hash='a'.repeat(64);globalThis.fetch=async(url,init)=>{
+      if(String(url).endsWith('/move_v2'))return Response.json({metadata:{...photo,rev:'r2',path_lower:'/photos/deleted/img_2.jpg',path_display:'/photos/deleted/IMG_2.jpg',${mismatch}}});
+      return respond(url,init);
+    };`);
+    expect(out.exit).not.toBe(0); expect(result(out).error).toMatchObject({code:'unknown_outcome',details:{outcome:'unknown'}});
+  }
+  for (const sourceHash of ["undefined", "'invalid'"]) {
+    const out = await cli(move, metadata + `photo.content_hash=${sourceHash};globalThis.fetch=async(url,init)=>{
+      if(String(url).endsWith('/move_v2'))return Response.json({metadata:{...photo,rev:'r2',path_lower:'/photos/deleted/img_2.jpg',path_display:'/photos/deleted/IMG_2.jpg'}});
+      return respond(url,init);
+    };`);
+    expect(out.exit).not.toBe(0); expect(result(out).error.details.outcome).toBe('unknown');
+  }
+  const changed = await cli(move, metadata + `photo.content_hash='a'.repeat(64);globalThis.fetch=async(url,init)=>{
+    if(String(url).endsWith('/move_v2'))return Response.json({metadata:{...photo,content_hash:'b'.repeat(64),path_lower:'/photos/deleted/img_2.jpg',path_display:'/photos/deleted/IMG_2.jpg'}});
+    return respond(url,init);
+  };`);
+  expect(result(changed).error.details.outcome).toBe('unknown');
+});
+
 test("known source revision/location or folder identity drift blocks dispatch", async () => {
   for(const drift of ["photo.rev='r2';", "photo.path_lower='/elsewhere/img_2.jpg';", "deleted.id='id:replacement';", "parent.path_lower='/renamed';"]) {
     const out=await cli(move,metadata+drift+`globalThis.fetch=respond;`);

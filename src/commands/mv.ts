@@ -42,7 +42,10 @@ async function safeMove(sources: string[], options: SafeMoveOptions): Promise<vo
     }, request);
     try {
       const moved = validateMetadata(result?.metadata);
-      if (moved[".tag"] !== "file" || moved.id !== source || moved.rev !== options.expectedRev || moved.path_lower !== destination.toLowerCase()) throw new Error();
+      const sameContent = moved.size === original.size && (original.content_hash === undefined
+        ? moved.rev === original.rev
+        : /^[0-9a-f]{64}$/.test(original.content_hash) && moved.content_hash === original.content_hash);
+      if (moved[".tag"] !== "file" || moved.id !== source || !sameContent || moved.path_lower !== destination.toLowerCase()) throw new Error();
       return { outcome: "confirmed", metadata: moved };
     } catch {
       throw new MachineError("unknown_outcome", "Submission returned mismatching metadata. Reconcile without replaying.", { outcome: "unknown" });

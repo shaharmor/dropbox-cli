@@ -12,6 +12,7 @@
 - `auth login --non-interactive` and `--timeout` options, plus cancellation on SIGINT/SIGTERM.
 
 ### Fixed
+- Confirm safe moves when Dropbox assigns a new revision but returns the same file ID, exact destination, size and content hash; return the new revision for subsequent moves/restores. Changed or unprovable content remains unknown without replay.
 - Preserve safe mkdir's authoritative creation refusal when follow-up existing-folder verification fails; report `created: false` only after verifying exact folder metadata.
 - Honor valid Retry-After minimums on read retries, including HTTP-date and server errors, without timer overflow; preserve status/timing on cancellation and stop internal retries on malformed timing.
 - Report structured machine HTTP 401 refusals as stable `auth_error` with sanitized reconnect guidance and bounded provider details, without changing mutation terminality.
