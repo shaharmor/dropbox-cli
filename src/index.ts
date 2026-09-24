@@ -11,6 +11,7 @@ import { registerInfoCommand } from "./commands/info";
 import { registerLsCommand } from "./commands/ls";
 import { registerMkdirCommand } from "./commands/mkdir";
 import { registerMvCommand } from "./commands/mv";
+import { registerSafeBatchCommand } from "./commands/mv-batch";
 import { registerSearchCommand } from "./commands/search";
 import { registerShareCommand } from "./commands/share";
 import { registerUploadCommand } from "./commands/upload";
@@ -36,7 +37,7 @@ program.hook("preAction", (thisCommand) => {
 program.command("capabilities")
   .description("Describe the versioned viewer machine contract without authentication")
   .action(() => printSuccess({ protocol_version: 1, capabilities: [
-    "account-status", "login-pkce", "list-page", "metadata", "download-original", "ensure-directory", "move-single",
+    "account-status", "login-pkce", "list-page", "metadata", "download-original", "ensure-directory", "move-single", "move-batch",
   ] }));
 
 // Register all commands (alphabetical order)
@@ -48,6 +49,7 @@ registerInfoCommand(program);
 registerLsCommand(program);
 registerMkdirCommand(program);
 registerMvCommand(program);
+registerSafeBatchCommand(program);
 registerSearchCommand(program);
 registerShareCommand(program);
 registerUploadCommand(program);

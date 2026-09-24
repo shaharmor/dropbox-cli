@@ -9,7 +9,7 @@ export function fixture() {
   const source = pathToFileURL(join(import.meta.dir, "../../src/")).href;
   const children: ReturnType<typeof Bun.spawn>[] = [];
   let sequence = 0;
-  function start(code: string) {
+  function start(code: string, input?: string) {
     const script = join(root, `worker-${sequence++}.ts`);
     writeFileSync(script, `
       import { strict as assert } from 'node:assert';
@@ -29,7 +29,7 @@ export function fixture() {
     const child = Bun.spawn([process.execPath, script], {
       cwd: root,
       env: { HOME: root, DROPBOX_CLI_CONFIG_DIR: join(root, "config"), TMPDIR: root, PATH: process.env.PATH },
-      stdout: "pipe", stderr: "pipe",
+      stdout: "pipe", stderr: "pipe", stdin: input === undefined ? "ignore" : new Blob([input]),
     });
     children.push(child);
     // Drain both pipes immediately, including workers deliberately held at barriers.
@@ -37,7 +37,7 @@ export function fixture() {
     const stderr = new Response(child.stderr).text();
     return { child, result: async () => ({ exit: await child.exited, stdout: await stdout, stderr: await stderr }) };
   }
-  return { root, start, async run(code: string) { return start(code).result(); }, async close() {
+  return { root, start, async run(code: string, input?: string) { return start(code, input).result(); }, async close() {
     for (const child of children) if (child.exitCode === null) child.kill("SIGKILL");
     await Promise.all(children.map(child => child.exited));
     rmSync(root, { recursive: true, force: true });

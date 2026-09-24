@@ -194,10 +194,10 @@ Use `dropbox-cli capabilities` before using the bundled helper. It requires no
 credentials and returns `{ "ok": true, "data": { "protocol_version": 1,
 "capabilities": [...] } }`. Require the capability names, not just the executable
 version: `account-status`, `login-pkce`, `list-page`, `metadata`,
-`download-original`, `ensure-directory`, and `move-single`.
+`download-original`, `ensure-directory`, `move-single`, and `move-batch`.
 
-These are opt-in contracts. Legacy directory downloads, ordinary `mv`, and batch
-or pattern commands are **not** the viewer interface. Launch with argument arrays,
+These are opt-in contracts. Legacy directory downloads, ordinary `mv`, and
+`bulk-mv` pattern commands are **not** the viewer interface. Launch with argument arrays,
 not a shell. All machine reads and moves require `--expected-account` (the Dropbox
 account ID, never a token). Each request authenticates from an account-checked,
 frozen credential snapshot. Account changes cannot retarget it. `auth status`
@@ -269,6 +269,35 @@ dropbox-cli mv id:PHOTO /Photos/deleted/IMG_2.jpg --safe \
   and the confirmed current revision. The viewer owns its selected-folder/`deleted`
   relationship and session state;
   the helper exposes no delete or remote cleanup operation.
+
+### Checked batch moves
+
+`mv-batch --expected-account ACCOUNT` reads a JSON array from **stdin**, bounded to
+100 entries and 512 KiB. Each entry has `fileID`, `revision`, optional `contentHash`,
+`size`, `sourcePath`, `destinationPath`, `sourceParentID`, and `destinationParentID`.
+IDs, source paths and destinations must be unique; source/destination overlap is
+rejected. No wildcard, autorename or ownership transfer is allowed.
+
+The helper checks each distinct parent path/ID once, then checks source
+identity/revision/content/location and destination vacancy with at most four
+concurrent per-photo checks. A failed photo preflight excludes that photo; shared
+folder failure stops the whole submission. Valid entries use one
+`files/move_batch_v2` request. For ten photos between the same two folders, the
+successful path is 23 Dropbox requests rather than the viewer's previous 90.
+
+The response is `{entries, async_job_id?}` in **original input order**. Each entry
+contains `fileID` and `outcome`: `confirmed` (with validated `metadata`), `pending`,
+or `not_submitted` / `refused` / `unknown` (with structured `error`). Dropbox
+`internal_error` and malformed receipts remain unknown, never safe to replay.
+
+For an async receipt, retain the job ID and **only the pending entries**, in their
+original order. Pass that exact subset on stdin to
+`mv-batch --job-id JOB --expected-account ACCOUNT`. This performs one read-only
+`files/move_batch/check_v2` request, without preflight or resubmission. A failed
+poll says nothing about whether the original moves applied. Transient poll errors
+retain the job ID and timing evidence; an invalid/expired job ID drops the polling
+handle but leaves moves unknown for read-only per-file reconciliation. The caller
+owns polling cadence, attempt identity, Undo, and session lifetime.
 
 ### Sharing policy — explicit owner override
 

@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- Checked `mv-batch` machine contract: bounded stdin, shared parent validation, four-way photo preflight, ID-addressed batch submission, per-photo outcomes and read-only async-job polling without replay.
+- Network-denied batch tests for partial failures, drift, lost receipts, account binding, polling, request counts and bounded concurrency.
 - Optional bounded `retry_after_seconds` machine-error timing evidence from valid Retry-After headers; it never changes mutation terminality or authorizes replay.
 - Versioned viewer capability handshake, explicit bounded nonrecursive listing pages, and account-bound machine metadata.
 - Revision-addressed original downloads to an explicit absolute output file, with exclusive streaming staging, identity/size/Dropbox-hash checks, existing-symlink rejection and no-replace publication.
