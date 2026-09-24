@@ -71,7 +71,7 @@ test("capabilities advertise only implemented viewer contracts without authentic
   const out = await cli(["capabilities"], "", false);
   expect(out.exit).toBe(0);
   expect(result(out).data).toMatchObject({protocol_version:1});
-  expect(result(out).data.capabilities).toEqual(["account-status", "login-pkce", "list-page", "metadata", "download-original", "ensure-directory", "move-single", "move-batch", "thumbnail-batch"]);
+  expect(result(out).data.capabilities).toEqual(["account-status", "login-pkce", "list-page", "metadata", "download-original", "download-progress", "ensure-directory", "move-single", "move-batch", "thumbnail-batch"]);
 });
 
 test("malformed command arguments are bounded JSON without stack traces or argument echoes", async () => {
@@ -317,6 +317,24 @@ function recordedDownloadSetup(path: string, changeMetadata = '', duringDownload
     };
   `;
 }
+test("original progress reports actual written bytes on stderr without changing the success envelope", async () => {
+  const path = join(realpathSync(f.root), "progress-original.jpg");
+  const setup = recordedDownloadSetup(path).replace("pull(c){", "async pull(c){await Bun.sleep(3);");
+  const out = await cli([...downloadArgs(path, recordedHash), "--progress"], setup);
+  expect(out.exit).toBe(0);
+  expect(result(out).data.local_path).toBe(path);
+  const events = out.stderr.trim().split("\n").map(line => JSON.parse(line));
+  const size = lstatSync(path).size;
+  expect(events[0]).toEqual({type: "download_progress", downloaded_bytes: 0, total_bytes: size});
+  expect(events.at(-1)).toEqual({type: "download_progress", downloaded_bytes: size, total_bytes: size});
+  expect(events.length).toBeLessThan(20);
+  expect(events.some(event => event.downloaded_bytes > 0 && event.downloaded_bytes < size)).toBe(true);
+  for (let i = 1; i < events.length; i++) {
+    expect(events[i].downloaded_bytes).toBeGreaterThanOrEqual(events[i - 1].downloaded_bytes);
+    expect(events[i].downloaded_bytes).toBeLessThanOrEqual(size);
+  }
+});
+
 function expectRecordedDownloadCleanup() {
   expect(calls()).toEqual([{endpoint:'files/download',body:{path:'rev:r1'}}]);
   const stage=readFileSync(join(f.root,'download-stage'),'utf8');

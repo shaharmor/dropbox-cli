@@ -194,7 +194,7 @@ Use `dropbox-cli capabilities` before using the bundled helper. It requires no
 credentials and returns `{ "ok": true, "data": { "protocol_version": 1,
 "capabilities": [...] } }`. Require the capability names, not just the executable
 version: `account-status`, `login-pkce`, `list-page`, `metadata`,
-`download-original`, `ensure-directory`, `move-single`, and `move-batch`.
+`download-original`, `download-progress`, `ensure-directory`, `move-single`, `move-batch`, and `thumbnail-batch`.
 
 These are opt-in contracts. Legacy directory downloads, ordinary `mv`, and
 `bulk-mv` pattern commands are **not** the viewer interface. Launch with argument arrays,
@@ -212,6 +212,10 @@ status/logout coordination retains its existing two-second fail-closed wait and
 can report a coordination timeout during a slow refresh. Normal SQLite sidecar
 removal during validation is rechecked within the same acquisition budget;
 unsafe ownership, symlinks, hardlinks and permission failures still fail closed.
+
+### Download progress
+
+Machine original downloads accept `--progress`. When requested, stderr carries newline-delimited JSON such as `{"type":"download_progress","downloaded_bytes":65536,"total_bytes":1048576}`. Counts describe bytes written to the staging file after metadata validation, at most ten updates per second plus the initial/final events. No filenames, IDs, or credentials are included. A final byte count is not success: integrity verification and atomic publication still must finish, and stdout retains its single authoritative success/error envelope. Without the flag, downloads do not emit progress.
 
 ### Commands and responses
 

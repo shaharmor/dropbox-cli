@@ -38,7 +38,7 @@ program.hook("preAction", (thisCommand) => {
 program.command("capabilities")
   .description("Describe the versioned viewer machine contract without authentication")
   .action(() => printSuccess({ protocol_version: 1, capabilities: [
-    "account-status", "login-pkce", "list-page", "metadata", "download-original", "ensure-directory", "move-single", "move-batch", "thumbnail-batch",
+    "account-status", "login-pkce", "list-page", "metadata", "download-original", "download-progress", "ensure-directory", "move-single", "move-batch", "thumbnail-batch",
   ] }));
 
 // Register all commands (alphabetical order)

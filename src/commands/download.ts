@@ -13,6 +13,7 @@ interface OutputOptions extends MachineOptions {
   outputFile?: string;
   expectedId?: string;
   expectedHash?: string;
+  progress?: boolean;
 }
 
 async function checkOutput(path: string): Promise<void> {
@@ -54,6 +55,14 @@ async function downloadOriginal(sources: string[], options: OutputOptions): Prom
       }
       const blockSize = 4 * 1024 * 1024;
       let total = 0, blockBytes = 0, block = createHash("sha256");
+      let lastProgress = -Infinity;
+      const reportProgress = (force = false) => {
+        const now = performance.now();
+        if (!options.progress || (!force && now - lastProgress < 100)) return;
+        process.stderr.write(JSON.stringify({type: "download_progress", downloaded_bytes: total, total_bytes: meta.size}) + "\n");
+        lastProgress = now;
+      };
+      reportProgress();
       const hash = createHash("sha256");
       while (true) {
         const { done, value } = await waitForRequest(reader.read(), request.signal);
@@ -72,7 +81,9 @@ async function downloadOriginal(sources: string[], options: OutputOptions): Prom
           if (!written.bytesWritten) throw new MachineError("local_io_error", "Unable to write the staging file.");
           offset += written.bytesWritten;
         }
+        reportProgress();
       }
+      reportProgress(true);
       if (blockBytes) hash.update(block.digest());
       const actualHash = hash.digest("hex");
       if (total !== meta.size || (meta.content_hash !== undefined && meta.content_hash !== actualHash)) throw new MachineError("integrity_error", "Download size or Dropbox content hash did not match.");
@@ -144,6 +155,7 @@ export function registerDownloadCommand(program: Command): void {
     .option("--output-file <path>", "Machine mode: exact absolute output, never overwrite")
     .option("--expected-id <id>", "Recorded Dropbox file identity")
     .option("--expected-hash <hash>", "Optional recorded Dropbox content hash")
+    .option("--progress", "Machine mode: bounded-rate byte progress as JSON lines on stderr")
     .option("--expected-account <id>", "Required account identity for machine mode")
     .option("--timeout <seconds>", "Machine request deadline (1–600 seconds)")
     .addHelpText("after", `
