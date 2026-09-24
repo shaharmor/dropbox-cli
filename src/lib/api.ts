@@ -80,7 +80,7 @@ export async function getCredentialSnapshot(
 const READ_ENDPOINTS = new Set([
   "files/list_folder", "files/list_folder/continue", "files/get_metadata",
   "files/search_v2", "files/search/continue_v2", "users/get_current_account",
-  "files/download", "sharing/list_shared_links",
+  "files/download", "files/get_thumbnail_batch", "sharing/list_shared_links",
   "files/copy_batch/check_v2", "files/move_batch/check_v2", "files/upload_session/finish_batch/check",
 ]);
 
@@ -246,7 +246,7 @@ async function retryDelay(milliseconds: number, signal?: AbortSignal): Promise<v
 }
 
 const MACHINE_JSON_LIMIT = 2 * 1024 * 1024;
-async function boundedJSON(response: Response, options: RequestOptions): Promise<unknown> {
+async function boundedJSON(response: Response, options: RequestOptions, limit = MACHINE_JSON_LIMIT): Promise<unknown> {
   const reader = response.body?.getReader();
   if (!reader) throw new MachineError("invalid_response", "Missing Dropbox response body.");
   let size = 0;
@@ -256,7 +256,7 @@ async function boundedJSON(response: Response, options: RequestOptions): Promise
       const { done, value } = await waitForRequest(reader.read(), options.signal);
       if (done) break;
       size += value.length;
-      if (size > MACHINE_JSON_LIMIT) throw new MachineError("invalid_response", "Dropbox response exceeded the machine bound.");
+      if (size > limit) throw new MachineError("invalid_response", "Dropbox response exceeded the machine bound.");
       chunks.push(value);
     }
     return JSON.parse(Buffer.concat(chunks).toString("utf8"));
@@ -291,10 +291,10 @@ function retryAfterSeconds(response: Response): number | undefined {
   return seconds;
 }
 
-async function machineResponse(response: Response, options: RequestOptions, mutation: boolean): Promise<unknown> {
+async function machineResponse(response: Response, options: RequestOptions, mutation: boolean, limit = MACHINE_JSON_LIMIT): Promise<unknown> {
   const retry_after_seconds = retryAfterSeconds(response);
   let body: unknown;
-  try { body = await boundedJSON(response, options); }
+  try { body = await boundedJSON(response, options, limit); }
   catch {
     throw new MachineError(mutation ? "unknown_outcome" : "invalid_response", "Dropbox returned an incomplete or invalid response.", {
       outcome: mutation ? "unknown" : "not_submitted", http_status: response.status, retry_after_seconds,
@@ -339,6 +339,16 @@ export async function machineRpc<T = unknown>(endpoint: string, body: Record<str
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   }, request);
   return await machineResponse(response, request, mutation) as T;
+}
+
+export async function machineThumbnails(revisions: string[], options: RequestOptions): Promise<unknown> {
+  if (!options.expectedAccountId) throw new MachineError("invalid_args", "Expected account is required.");
+  const request = { ...options, machine: true, retry: "read" as const };
+  const response = await fetchWithRetry(`${CONTENT_BASE}/files/get_thumbnail_batch`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ entries: revisions.map(revision => ({ path: `rev:${revision}`, format: "jpeg", size: "w256h256", mode: "strict" })) }),
+  }, request);
+  return machineResponse(response, request, false, 4 * 1024 * 1024);
 }
 
 export function exactPath(path: string): boolean {

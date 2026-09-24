@@ -14,6 +14,7 @@ import { registerMvCommand } from "./commands/mv";
 import { registerSafeBatchCommand } from "./commands/mv-batch";
 import { registerSearchCommand } from "./commands/search";
 import { registerShareCommand } from "./commands/share";
+import { registerThumbnailsCommand } from "./commands/thumbnails";
 import { registerUploadCommand } from "./commands/upload";
 
 const program = new Command();
@@ -37,7 +38,7 @@ program.hook("preAction", (thisCommand) => {
 program.command("capabilities")
   .description("Describe the versioned viewer machine contract without authentication")
   .action(() => printSuccess({ protocol_version: 1, capabilities: [
-    "account-status", "login-pkce", "list-page", "metadata", "download-original", "ensure-directory", "move-single", "move-batch",
+    "account-status", "login-pkce", "list-page", "metadata", "download-original", "ensure-directory", "move-single", "move-batch", "thumbnail-batch",
   ] }));
 
 // Register all commands (alphabetical order)
@@ -52,6 +53,7 @@ registerMvCommand(program);
 registerSafeBatchCommand(program);
 registerSearchCommand(program);
 registerShareCommand(program);
+registerThumbnailsCommand(program);
 registerUploadCommand(program);
 
 try { await program.parseAsync(); }

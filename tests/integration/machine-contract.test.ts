@@ -71,7 +71,7 @@ test("capabilities advertise only implemented viewer contracts without authentic
   const out = await cli(["capabilities"], "", false);
   expect(out.exit).toBe(0);
   expect(result(out).data).toMatchObject({protocol_version:1});
-  expect(result(out).data.capabilities).toEqual(["account-status", "login-pkce", "list-page", "metadata", "download-original", "ensure-directory", "move-single", "move-batch"]);
+  expect(result(out).data.capabilities).toEqual(["account-status", "login-pkce", "list-page", "metadata", "download-original", "ensure-directory", "move-single", "move-batch", "thumbnail-batch"]);
 });
 
 test("malformed command arguments are bounded JSON without stack traces or argument echoes", async () => {
