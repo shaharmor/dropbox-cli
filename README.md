@@ -188,6 +188,214 @@ Use `--human` for readable output (printed to stderr so stdout stays clean):
 dropbox-cli ls "/Photos" --human
 ```
 
+## Viewer machine contract (protocol 1)
+
+Use `dropbox-cli capabilities` before using the bundled helper. It requires no
+credentials and returns `{ "ok": true, "data": { "protocol_version": 1,
+"capabilities": [...] } }`. Require the capability names, not just the executable
+version: `account-status`, `login-pkce`, `list-page`, `metadata`,
+`download-original`, `download-progress`, `ensure-directory`, `move-single`, `move-batch`, and `thumbnail-batch`.
+
+These are opt-in contracts. Legacy directory downloads, ordinary `mv`, and
+`bulk-mv` pattern commands are **not** the viewer interface. Launch with argument arrays,
+not a shell. All machine reads and moves require `--expected-account` (the Dropbox
+account ID, never a token). Each request authenticates from an account-checked,
+frozen credential snapshot. Account changes cannot retarget it. `auth status`
+returns local account identity without tokens; `auth login --non-interactive`
+uses browser PKCE and never prompts on stdin. Missing app configuration is a
+structured setup error; the helper does not provision credentials. Concurrent
+transport requests wait up to 17 seconds for asynchronous credential coordination,
+observing request cancellation, then reread the published snapshot. Network refresh
+has a 15-second deadline while holding the existing SQLite transaction; timeout
+never steals a live lock or changes the expected account. Synchronous local
+status/logout coordination retains its existing two-second fail-closed wait and
+can report a coordination timeout during a slow refresh. Normal SQLite sidecar
+removal during validation is rechecked within the same acquisition budget;
+unsafe ownership, symlinks, hardlinks and permission failures still fail closed.
+
+### Download progress
+
+Machine original downloads accept `--progress`. When requested, stderr carries newline-delimited JSON such as `{"type":"download_progress","downloaded_bytes":65536,"total_bytes":1048576}`. Counts describe bytes written to the staging file after metadata validation, at most ten updates per second plus the initial/final events. No filenames, IDs, or credentials are included. A final byte count is not success: integrity verification and atomic publication still must finish, and stdout retains its single authoritative success/error envelope. Without the flag, downloads do not emit progress.
+
+### Commands and responses
+
+Examples use placeholder IDs and revisions; do not run them against personal files.
+
+```sh
+dropbox-cli ls /Photos --page --page-size 128 --expected-account ACCOUNT
+dropbox-cli ls --page --cursor CURSOR --expected-account ACCOUNT
+dropbox-cli info id:PHOTO --machine --expected-account ACCOUNT
+dropbox-cli download rev:REVISION --expected-id id:PHOTO \
+  --output-file /absolute/cache/original.HEIC --expected-account ACCOUNT
+dropbox-cli mkdir /Photos/deleted --safe --parent-id id:PHOTOS \
+  --expected-account ACCOUNT
+dropbox-cli mv id:PHOTO /Photos/deleted/IMG_2.jpg --safe \
+  --expected-account ACCOUNT --expected-rev REVISION \
+  --expected-source-path /Photos/IMG_2.jpg \
+  --source-parent-id id:PHOTOS --destination-parent-id id:DELETED
+```
+
+- **`ls --page`** returns `{entries, cursor, has_more}` for exactly one provider
+  page, never a final accumulated array. The requested first-page size is 1–2000
+  (default 128); Dropbox continuation retains the cursor's paging behavior, so
+  callers must allow up to 2000 entries per response. Oversized or malformed
+  responses fail rather than silently dropping entries. Do not combine page mode
+  with `--limit`, `--recursive`, or `--type`, or a continuation cursor with a path.
+  Entries include direct files and folders, including `deleted`; the viewer must
+  filter eligible JPEG/JPG/HEIC files and apply stable natural filename ordering.
+  Do not publish a new inventory until every continuation succeeds.
+- **`info --machine`** accepts an `id:` or exact non-root path and returns metadata
+  with `.tag`, ID, name, location, and file revision/size/hash when supplied.
+  Sharing fields remain informational. Machine mutations require identified
+  non-root parent folders; the Dropbox account root is not a synthetic folder ID.
+- **`download --output-file`** requires exactly one `rev:` source, `--expected-id`,
+  and an absolute normalized output path. Optional `--expected-hash` checks the
+  inventoried Dropbox hash too. The helper checks returned ID/revision/size and,
+  when supplied, the Dropbox content hash (SHA-256 of the concatenated SHA-256
+  digests of 4 MiB blocks). It streams bytes without whole-file buffering into a
+  unique exclusive mode-0600 `.dropbox-UUID.part` file in the existing output
+  directory. Only after integrity checks, sync and close does a no-replace hard
+  link publish the exact output. Success returns `{id, rev, content_hash?, size,
+  local_path}`. It never infers an output basename from remote metadata.
+- **`mkdir --safe`** validates the exact parent location/ID, creates without
+  autorename, or inspects an existing folder (including a terminal folder conflict
+  racing creation). Returns `{created, metadata}`. Existing files and permission
+  failures are errors; uncertain creation is not retried or converted to success.
+- **`mv --safe`** accepts only one ID source and exact destination. It checks the
+  reviewed revision/source location, both parent identities/locations, and target
+  vacancy before one `files/move_v2` submission with `autorename: false` and
+  `allow_ownership_transfer: false`. File and folder collisions remain unresolved.
+  Success is `{outcome: "confirmed", metadata}` only when the returned ID, destination,
+  size and content hash match the preflight file. Dropbox may assign a new revision
+  to unchanged content when moving it; consumers must retain `metadata.rev` for the
+  next move or restore. Without a source content hash, a changed revision remains
+  unknown. Restore uses the same command with reversed parent IDs, recorded paths
+  and the confirmed current revision. The viewer owns its selected-folder/`deleted`
+  relationship and session state;
+  the helper exposes no delete or remote cleanup operation.
+
+### Checked batch moves
+
+`mv-batch --expected-account ACCOUNT` reads a JSON array from **stdin**, bounded to
+100 entries and 512 KiB. Each entry has `fileID`, `revision`, optional `contentHash`,
+`size`, `sourcePath`, `destinationPath`, `sourceParentID`, and `destinationParentID`.
+IDs, source paths and destinations must be unique; source/destination overlap is
+rejected. No wildcard, autorename or ownership transfer is allowed.
+
+The helper checks each distinct parent path/ID once, then checks source
+identity/revision/content/location and destination vacancy with at most four
+concurrent per-photo checks. A failed photo preflight excludes that photo; shared
+folder failure stops the whole submission. Valid entries use one
+`files/move_batch_v2` request. For ten photos between the same two folders, the
+successful path is 23 Dropbox requests rather than the viewer's previous 90.
+
+The response is `{entries, async_job_id?}` in **original input order**. Each entry
+contains `fileID` and `outcome`: `confirmed` (with validated `metadata`), `pending`,
+or `not_submitted` / `refused` / `unknown` (with structured `error`). Dropbox
+`internal_error` and malformed receipts remain unknown, never safe to replay.
+
+For an async receipt, retain the job ID and **only the pending entries**, in their
+original order. Pass that exact subset on stdin to
+`mv-batch --job-id JOB --expected-account ACCOUNT`. This performs one read-only
+`files/move_batch/check_v2` request, without preflight or resubmission. A failed
+poll says nothing about whether the original moves applied. Transient poll errors
+retain the job ID and timing evidence; an invalid/expired job ID drops the polling
+handle but leaves moves unknown for read-only per-file reconciliation. The caller
+owns polling cadence, attempt identity, Undo, and session lifetime.
+
+### Sharing policy — explicit owner override
+
+The owner directed: **“Just move the image regardless of the sharing state of the deleted folder”.**
+Reject and restore do **not** require matching or known sharing contexts. A private source, a separately shared destination, differing inherited
+contexts, and absent sharing fields do not independently block a valid move.
+Moving into a shared folder may expose the image to that folder's collaborators.
+The helper never calls sharing-management/inventory APIs, changes permissions,
+requests additional sharing scopes, or enables ownership transfer. This is an
+explicit execution override of the earlier sharing-gating design, not compliance
+with that design's sharing-conflict acceptance example.
+
+### Outcomes, cancellation, and recovery
+
+Success/error JSON envelopes remain on stdout; optional human/debug diagnostics
+remain on stderr. Drain both concurrently. Machine RPC input responses are capped
+at 2 MiB before JSON parsing; listing pages at 2000 entries; download metadata
+headers at 16 KiB. Error details retain nested Dropbox tags and request IDs when
+available, with credentials redacted, depth/field limits and an 8 KiB nested-error
+budget. Retain a bounded stdout/stderr budget in the caller (allow room for JSON
+pretty-printing), and treat truncation or malformed output as an error, not success.
+Invalid command arguments produce bounded JSON without echoing argv or stack traces.
+
+Machine errors add `error.details.outcome`:
+
+| Outcome | Meaning for this invocation |
+|---|---|
+| `not_submitted` | Validation, authentication, local download or preflight read failed before any mutation dispatch. This is **not** evidence about an older attempt. |
+| `refused` | This mutation received a structured Dropbox refusal (HTTP 400/401/403/409). Nested tags, HTTP status and request ID are retained. |
+| `unknown` | A dispatched mutation may have applied: transport loss, deadline/cancellation, ambiguous HTTP status, malformed acknowledgment or mismatching returned metadata. Code is `unknown_outcome`. |
+
+Structured HTTP 401 refusals use the stable `auth_error` code and sanitized
+reconnect guidance, retaining bounded provider tags and request IDs. A read may
+recover authentication once; a submitted mutation never refreshes or replays
+itself and retains `refused` terminality for a structured 401. If the one read
+recovery fails with `auth_error`, retained details describe the original read's
+401, not the token endpoint's response. Optional bounded first-401 diagnostics
+have a one-second collection limit; malformed/stalled diagnostics do not prevent
+otherwise-permitted recovery, and request cancellation still stops dispatch.
+
+Machine errors may also include `error.details.retry_after_seconds`: nonnegative
+whole seconds from a valid `Retry-After` delta-seconds value or canonical IMF-fixdate
+HTTP-date, relative to response receipt (rounded up for dates; past dates yield 0).
+Headers over 128 characters, malformed values and unsafe millisecond-deadline
+overflow are omitted, not shortened to a retry cap. This field is **timing evidence
+only**: it never changes `outcome` or proves non-application, including for HTTP 429.
+Callers must persist the later of this delay and their local backoff, and honor it
+across restarts before an otherwise-authorized retry. Missing/invalid headers leave
+local backoff in effect; uncertain mutations still require read-only reconciliation.
+The helper's internal read retries for HTTP 429/5xx wait for the later of valid
+provider timing and local backoff, without a provider-delay cap or overflowing
+runtime timers. Cancellation/deadline during that wait returns `not_submitted`
+with the original HTTP status and provider timing, without another dispatch.
+A present but invalid/oversized/overflowing header stops internal retries and
+returns the provider response with timing omitted; an absent header uses bounded
+local backoff. This does not establish a known minimum for an invalid header.
+
+Legacy `bulk-mv` proceeds after failed destination creation only for a structured
+HTTP 409 existing-folder conflict. Authentication, throttling, server, malformed
+and other creation failures stop before listing or submitting any move batch.
+
+No machine mutation automatically retries, including on authentication loss, rate
+limits, server errors or timeouts. `--timeout` sets a 1–600 second operation deadline
+(default 120); SIGINT/SIGTERM cancel. A killed process or lost/malformed stdout
+cannot prove that a move was refused. Save attempt identity before launch. After an
+unknown outcome, **perform read-only reconciliation, never blindly rerun `mv`**.
+A matching destination may confirm the sole outstanding attempt; source presence,
+target vacancy, process exit and elapsed time cannot authorize a second submission
+or Undo. Without authoritative terminal evidence, keep the operation unresolved.
+This CLI does not provide a durable attempt ledger or an exactly-once API.
+
+Dropbox has no atomic expected-revision move. These checks detect known drift but
+cannot prevent concurrent external changes between validation and submission.
+ID addressing prevents a replacement at the old source pathname from retargeting
+the move. Provider no-overwrite and real-account behavior still require separately
+authorized tests on disposable cloud fixtures; mocked tests are not that proof.
+
+### Local download boundary
+
+Existing output objects are never replaced. Existing symlinks in the output or any
+ancestor are rejected, including dangling links; on macOS supply canonical paths
+(e.g. resolve `/tmp` or `/var` aliases before constructing the output). Parents must
+already exist. Cancellation/errors remove the staging file when possible and never
+publish partial contents. SIGKILL can leave an unpublished `.part`; clean up only
+helper-created disposable files inside the viewer's own cache after confirming no
+worker owns them. A crash after publication but before acknowledgment may leave a
+complete output, which a later download must not overwrite.
+
+The owner chose **standard file safety**: ordinary Bun/Node filesystem operations,
+exclusive staging and no-replace publication, with no FFI/native layer. Protection
+against concurrent same-user directory/ancestor swaps is explicitly outside this
+boundary. Use an application-owned cache, not a directory writable by untrusted
+processes; do not claim race-proof ancestor containment.
+
 ## Development
 
 ```sh

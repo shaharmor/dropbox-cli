@@ -27,6 +27,7 @@ mock.module("../../src/lib/output", () => ({
 
 import { Command } from "commander";
 import { registerAuthCommands } from "../../src/commands/auth";
+import { CredentialError } from "../../src/types";
 
 describe("auth commands", () => {
   beforeEach(() => {
@@ -65,8 +66,17 @@ describe("auth commands", () => {
       ).rejects.toThrow("EXIT:auth_failed");
       expect(captured.error).toEqual({
         code: "auth_failed",
-        message: "Connection refused",
+        message: "Authentication failed",
       });
+    });
+
+    test("preserves typed connection errors and supports noninteractive bounded login", async () => {
+      mockLogin.mockRejectedValueOnce(new CredentialError("auth_cancelled", "Authentication cancelled."));
+      const program = new Command();
+      registerAuthCommands(program);
+      await expect(program.parseAsync(["bun", "test", "auth", "login", "--non-interactive", "--timeout", "10"])).rejects.toThrow("EXIT:auth_cancelled");
+      expect(mockLogin).toHaveBeenCalledWith(expect.objectContaining({ interactive: false, timeoutMs: 10000, signal: expect.any(AbortSignal) }));
+      expect(captured.error).toEqual({ code: "auth_cancelled", message: "Authentication cancelled." });
     });
 
     test("uses generic message for non-Error rejections", async () => {
