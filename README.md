@@ -312,6 +312,28 @@ retain the job ID and timing evidence; an invalid/expired job ID drops the polli
 handle but leaves moves unknown for read-only per-file reconciliation. The caller
 owns polling cadence, attempt identity, Undo, and session lifetime.
 
+### Thumbnails
+
+`thumbnails --expected-account ACCOUNT` reads a JSON array from **stdin**, bounded
+to 1–25 entries and 64 KiB. Each entry has `fileID`, `revision` and optional
+`contentHash`; file IDs must be unique. One read-only `files/get_thumbnail_batch`
+request fetches 256×256 JPEG thumbnails pinned to each `rev:`; originals are never
+downloaded.
+
+```sh
+echo '[{"fileID":"id:PHOTO","revision":"REVISION"}]' | \
+  dropbox-cli thumbnails --expected-account ACCOUNT
+```
+
+The response is `{entries}` in **original input order**. Each entry is either
+`{fileID, revision, thumbnail}` with base64 JPEG bytes (at most 64 KiB decoded), or
+`{fileID, revision, error: "unavailable"}`. A thumbnail is returned only when
+Dropbox's metadata matches the requested ID, revision and, when supplied, content
+hash. `unavailable` is a plain string, not a structured error: it covers
+unsupported images, provider failures and mismatching or malformed thumbnails, and
+is never evidence for a photo decision. A response with the wrong number of entries
+fails the whole request with `invalid_response`.
+
 ### Sharing policy — explicit owner override
 
 The owner directed: **“Just move the image regardless of the sharing state of the deleted folder”.**
