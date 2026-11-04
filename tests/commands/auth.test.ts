@@ -27,6 +27,7 @@ mock.module("../../src/lib/output", () => ({
 
 import { Command } from "commander";
 import { registerAuthCommands } from "../../src/commands/auth";
+import { CredentialError } from "../../src/types";
 
 describe("auth commands", () => {
   beforeEach(() => {
@@ -55,8 +56,8 @@ describe("auth commands", () => {
       });
     });
 
-    test("outputs error on failed login", async () => {
-      mockLogin.mockRejectedValueOnce(new Error("Connection refused"));
+    test.each([new Error("Connection refused"), "something went wrong"])("outputs a generic error when login rejects with %p", async (failure) => {
+      mockLogin.mockRejectedValueOnce(failure);
 
       const program = new Command();
       registerAuthCommands(program);
@@ -65,19 +66,17 @@ describe("auth commands", () => {
       ).rejects.toThrow("EXIT:auth_failed");
       expect(captured.error).toEqual({
         code: "auth_failed",
-        message: "Connection refused",
+        message: "Authentication failed",
       });
     });
 
-    test("uses generic message for non-Error rejections", async () => {
-      mockLogin.mockRejectedValueOnce("something went wrong");
-
+    test("preserves typed connection errors and supports noninteractive bounded login", async () => {
+      mockLogin.mockRejectedValueOnce(new CredentialError("auth_cancelled", "Authentication cancelled."));
       const program = new Command();
       registerAuthCommands(program);
-      await expect(
-        program.parseAsync(["node", "test", "auth", "login"])
-      ).rejects.toThrow("EXIT:auth_failed");
-      expect(captured.error?.message).toBe("Authentication failed");
+      await expect(program.parseAsync(["bun", "test", "auth", "login", "--non-interactive", "--timeout", "10"])).rejects.toThrow("EXIT:auth_cancelled");
+      expect(mockLogin).toHaveBeenCalledWith(expect.objectContaining({ interactive: false, timeoutMs: 10000, signal: expect.any(AbortSignal) }));
+      expect(captured.error).toEqual({ code: "auth_cancelled", message: "Authentication cancelled." });
     });
   });
 
