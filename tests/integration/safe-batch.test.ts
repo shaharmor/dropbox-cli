@@ -76,9 +76,11 @@ test('async receipt can be polled without repeating preflight or submitting agai
 });
 
 test('partial provider failures distinguish refusal from uncertain internal errors', async () => {
-  const out=await cli(entries.slice(0,3), `globalThis.fetch=async(url,init)=>String(url).endsWith('/move_batch_v2')?Response.json({'.tag':'complete',entries:[{'.tag':'success',success:moved(entries[0])},{'.tag':'failure',failure:{'.tag':'relocation_error',relocation_error:{'.tag':'to',to:{'.tag':'conflict'}}}},{'.tag':'failure',failure:{'.tag':'internal_error'}}]}):respond(url,init);`);
+  const out=await cli(entries.slice(0,3), `globalThis.fetch=async(url,init)=>String(url).endsWith('/move_batch_v2')?Response.json({'.tag':'complete',entries:[{'.tag':'success',success:moved(entries[0])},{'.tag':'failure',failure:{'.tag':'relocation_error',relocation_error:{'.tag':'to',to:{'.tag':'conflict',conflict:{'.tag':'file'}},note:'DO-NOT-LEAK'}}},{'.tag':'failure',failure:{'.tag':'internal_error'}}]}):respond(url,init);`);
   expect(data(out).entries.map(e=>e.outcome)).toEqual(['confirmed','refused','unknown']);
-  expect(data(out).entries[2].error.code).toBe('unknown_outcome');
+  expect(data(out).entries[1].error.details.dropbox).toEqual({'.tag':'relocation_error',relocation_error:{'.tag':'to',to:{'.tag':'conflict',conflict:{'.tag':'file'}}}});
+  expect(data(out).entries[2].error).toMatchObject({code:'unknown_outcome',details:{dropbox:{'.tag':'internal_error'}}});
+  expect(out.stdout).not.toContain('DO-NOT-LEAK');
 });
 
 test('malformed results and lost acknowledgments stay unknown and never replay', async () => {

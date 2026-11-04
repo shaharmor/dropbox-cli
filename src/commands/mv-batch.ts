@@ -129,13 +129,23 @@ function completedEntry(move: Move, item: BatchEntryResult): Entry {
     return { fileID: move.fileID, outcome: "confirmed", metadata };
   }
   // internal_error explicitly requires reconciliation in Dropbox's API contract.
-  // Unknown tags are not refusal evidence; never echo untrusted provider text.
+  // Unknown tags are not refusal evidence; only identifier-shaped tags are echoed, never provider text.
   const tag = item?.failure?.[".tag"];
   const refused = item?.[".tag"] === "failure" && (tag === "too_many_write_operations" ||
     (tag === "relocation_error" && isText(item.failure?.relocation_error?.[".tag"])));
   return failedEntry(move, new MachineError("batch_entry_failed", "Move did not complete.", {
     outcome: refused ? "refused" : "unknown",
+    dropbox: tagChain(item?.failure),
   }));
+}
+
+/** The nested `.tag` chain of a Dropbox union (e.g. relocation_error → to → conflict), bounded. */
+function tagChain(value: unknown, depth = 0): Record<string, unknown> | undefined {
+  const union = value as Record<string, unknown> | null | undefined;
+  const tag = union?.[".tag"];
+  if (depth >= 8 || typeof tag !== "string" || !/^[a-z0-9_]{1,64}$/.test(tag)) return undefined;
+  const nested = tagChain(union![tag], depth + 1);
+  return nested ? { ".tag": tag, [tag]: nested } : { ".tag": tag };
 }
 
 // ---------------------------------------------------------------------------

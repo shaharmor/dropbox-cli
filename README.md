@@ -293,6 +293,8 @@ The response is `{entries, async_job_id?}` in **original input order**. Each ent
 contains `fileID` and `outcome`: `confirmed` (with validated `metadata`), `pending`,
 or `not_submitted` / `refused` / `unknown` (with structured `error`). Dropbox
 `internal_error` and malformed receipts remain unknown, never safe to replay.
+Per-entry Dropbox failures keep their nested tag chain (for example
+`relocation_error` → `to` → `conflict`) in `error.details.dropbox`, without provider text.
 A submitted move is confirmed when the returned ID, destination, size and content
 hash match the preflight file; without `contentHash` on stdin the helper uses the
 preflight hash, so a new revision does not leave the move unknown. Polling does no
