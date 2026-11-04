@@ -162,8 +162,10 @@ async function downloadOriginal(sources: string[], options: OutputOptions): Prom
       request.signal?.throwIfAborted();
       // Hard-link publication is atomic and fails if any object already occupies output.
       await link(stage, output);
-      await unlink(stage);
+      // The verified original is already published; a leftover stage must not turn success into failure.
+      const published = stage;
       stage = undefined;
+      await unlink(published).catch(() => {});
       return { id: meta.id, rev: meta.rev, content_hash: meta.content_hash, size: total, local_path: output };
     } catch (error) {
       if (error instanceof MachineError) throw error;

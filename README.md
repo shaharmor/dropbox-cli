@@ -255,7 +255,8 @@ dropbox-cli mv id:PHOTO /Photos/deleted/IMG_2.jpg --safe \
   digests of 4 MiB blocks); a response without one fails as `identity_mismatch`. It streams bytes without whole-file buffering into a
   unique exclusive mode-0600 `.dropbox-UUID.part` file in the existing output
   directory. Only after integrity checks, sync and close does a no-replace hard
-  link publish the exact output. Success returns `{id, rev, content_hash, size,
+  link publish the exact output. If removing the staging name then fails, the
+  download still succeeds and a `.part` hard link may remain. Success returns `{id, rev, content_hash, size,
   local_path}`. It never infers an output basename from remote metadata.
 - **`mkdir --safe`** validates the exact parent location/ID, creates without
   autorename, or inspects an existing folder (including a terminal folder conflict
