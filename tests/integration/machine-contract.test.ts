@@ -80,8 +80,9 @@ test("malformed command arguments are bounded JSON without stack traces or argum
   expect(out.stdout.length).toBeLessThan(16384); expect(out.stderr).toBe(""); expect(out.stdout).not.toContain("fake-A");
 });
 
+const listEntry=`const listEntry=(tag,i,name)=>({'.tag':tag,id:'id:'+i,name,path_lower:('/photos/'+name).toLowerCase(),path_display:'/Photos/'+name,...(tag==='file'?{rev:'r'+i,size:3}:{})});`;
 test("paged listing retains 2050 direct entries across bounded explicit continuation", async () => {
-  const setup=`globalThis.fetch=async(url,init)=>{const body=JSON.parse(init.body); if(String(url).endsWith('/continue')) {assert.equal(body.cursor,'next');return Response.json({entries:Array.from({length:50},(_,i)=>({'.tag':'file',id:'id:'+ (2000+i),name:'IMG_'+(2000+i)+'.jpg'})),cursor:'end',has_more:false});} assert.equal(body.recursive,false);assert.equal(body.limit,2000);return Response.json({entries:Array.from({length:2000},(_,i)=>({'.tag':i===0?'folder':'file',id:'id:'+i,name:i===0?'deleted':'IMG_'+i+'.jpg'})),cursor:'next',has_more:true});};`;
+  const setup=listEntry+`globalThis.fetch=async(url,init)=>{const body=JSON.parse(init.body); if(String(url).endsWith('/continue')) {assert.equal(body.cursor,'next');return Response.json({entries:Array.from({length:50},(_,i)=>listEntry('file',2000+i,'IMG_'+(2000+i)+'.jpg')),cursor:'end',has_more:false});} assert.equal(body.recursive,false);assert.equal(body.limit,2000);return Response.json({entries:Array.from({length:2000},(_,i)=>listEntry(i===0?'folder':'file',i,i===0?'deleted':'IMG_'+i+'.jpg')),cursor:'next',has_more:true});};`;
   const first=await cli(["ls","/Photos","--page","--page-size","2000","--expected-account","A"],setup);
   expect(first.exit).toBe(0); expect(result(first).data.entries).toHaveLength(2000); expect(result(first).data.has_more).toBe(true);
   const next=await cli(["ls","--page","--cursor",result(first).data.cursor,"--expected-account","A"],setup);
@@ -95,6 +96,13 @@ test("continuation errors preserve nested tags/request ID; invalid paging never 
   expect(failed.stdout).not.toContain('fake-A'); expect(failed.stdout).not.toContain('fake-refresh');
   for(const flags of [["--recursive"],["--page-size","0"],["--page-size","2001"],["--type","file"]]) {
     const out=await cli(["ls","--page","--expected-account","A",...flags]); expect(result(out).error.code).toBe("invalid_args");
+  }
+});
+
+test("paged listing rejects pages with malformed entries instead of returning them", async () => {
+  for(const bad of ["null", "{'.tag':'file',id:'id:1',name:'a.jpg'}", "{...listEntry('file',1,'a.jpg'),id:'1'}", "{...listEntry('file',1,'a.jpg'),rev:undefined}", "{...listEntry('folder',1,'a'),'.tag':'unknown'}"]) {
+    const out=await cli(["ls","/Photos","--page","--expected-account","A"],listEntry+`globalThis.fetch=async()=>Response.json({entries:[listEntry('file',0,'ok.jpg'),${bad}],cursor:'end',has_more:false});`);
+    expect(out.exit).not.toBe(0); expect(result(out).error.code).toBe('invalid_response');
   }
 });
 
@@ -523,7 +531,7 @@ test("malformed and oversized RPC output fail bounded; stdout and stderr drain u
     const out=await cli(['info','id:photo','--machine','--expected-account','A'],`globalThis.fetch=async()=>new Response(${payload});`);
     expect(result(out).error.code).toBe('invalid_response'); expect(out.stdout.length).toBeLessThan(16384); expect(out.stderr).toBe('');
   }
-  const out=await cli(['ls','--page','--expected-account','A','--verbose'],`process.stderr.write('diagnostic '.repeat(100000));globalThis.fetch=async()=>Response.json({entries:Array.from({length:2000},(_,i)=>({'.tag':'file',id:'id:'+i,name:'照片'.repeat(100)+i+'.jpg'})),cursor:'end',has_more:false});`);
+  const out=await cli(['ls','--page','--expected-account','A','--verbose'],`process.stderr.write('diagnostic '.repeat(100000));`+listEntry+`globalThis.fetch=async()=>Response.json({entries:Array.from({length:2000},(_,i)=>listEntry('file',i,'照片'.repeat(40)+i+'.jpg')),cursor:'end',has_more:false});`);
   expect(out.exit).toBe(0); expect(result(out).data.entries).toHaveLength(2000); expect(out.stderr.length).toBeGreaterThan(1000000);
 });
 

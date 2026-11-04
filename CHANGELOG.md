@@ -24,6 +24,7 @@
 - Check `mv-batch` parent folders four at a time instead of serially, so batches spanning many folders stay within the request deadline.
 - Report `cancelled` instead of `invalid_args` when `mv-batch` or `thumbnails` is cancelled or times out while stdin is still open.
 - Report a published original download as successful even if removing its staging file afterwards fails, instead of a `download_error` that made retries fail with `output_exists`.
+- Reject `ls --page` responses containing malformed entries (missing identity, location or file revision/size) as `invalid_response`.
 - Confirm safe moves when Dropbox assigns a new revision but returns the same file ID, exact destination, size and content hash; return the new revision for subsequent moves/restores. Changed or unprovable content remains unknown without replay.
 - Preserve safe mkdir's authoritative creation refusal when follow-up existing-folder verification fails; report `created: false` only after verifying exact folder metadata.
 - Honor valid Retry-After minimums on read retries, including HTTP-date and server errors, without timer overflow; preserve status/timing on cancellation and stop internal retries on malformed timing.

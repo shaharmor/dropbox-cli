@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import { rpc } from "../lib/api";
-import { machineRpc } from "../lib/machine-api";
+import { machineRpc, validateMetadata } from "../lib/machine-api";
 import { printSuccess, formatBytes, formatDate, runMachine } from "../lib/output";
 import { logHuman } from "../lib/logger";
 import { MachineError, type ListFolderResult, type DropboxEntry, type MachineOptions } from "../types";
@@ -24,7 +24,17 @@ function isMachineListing(options: LsOptions): boolean {
 
 function isValidPage(page: ListFolderResult | null): boolean {
   return !!page && Array.isArray(page.entries) && page.entries.length <= MAX_PAGE_ENTRIES &&
+    page.entries.every(isValidEntry) &&
     typeof page.cursor === "string" && page.cursor.length > 0 && typeof page.has_more === "boolean";
+}
+
+function isValidEntry(entry: unknown): boolean {
+  try {
+    validateMetadata(entry);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Exactly one provider page per call: the first page of `path`, or the page after `--cursor`. */

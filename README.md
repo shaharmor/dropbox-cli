@@ -239,7 +239,8 @@ dropbox-cli mv id:PHOTO /Photos/deleted/IMG_2.jpg --safe \
   page, never a final accumulated array. The requested first-page size is 1–2000
   (default 128); Dropbox continuation retains the cursor's paging behavior, so
   callers must allow up to 2000 entries per response. Oversized or malformed
-  responses fail rather than silently dropping entries. Do not combine page mode
+  responses fail rather than silently dropping entries; every entry must carry
+  `.tag`, ID, name and location, plus revision and size for files. Do not combine page mode
   with `--limit`, `--recursive`, or `--type`, or a continuation cursor with a path.
   Entries include direct files and folders, including `deleted`; the viewer must
   filter eligible JPEG/JPG/HEIC files and apply stable natural filename ordering.
