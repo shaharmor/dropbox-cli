@@ -19,7 +19,8 @@ import { registerUploadCommand } from "./commands/upload";
 
 const program = new Command();
 program.exitOverride();
-program.configureOutput({ writeErr: () => {} });
+// Error messages can echo argv, so drop them; help requested by a bare command still reaches stderr.
+program.configureOutput({ outputError: () => {} });
 
 program
   .name("dropbox-cli")
