@@ -27,6 +27,7 @@
 - Reject `ls --page` responses containing malformed entries (missing identity, location or file revision/size) as `invalid_response`.
 - Restore usage help on stderr for bare `dropbox-cli` and command-group invocations such as `dropbox-cli auth`; argument error messages stay suppressed so argv is never echoed.
 - Return a thumbnail only when its bytes carry JPEG start and end markers; other payloads report `unavailable`.
+- Report human-command failures such as a missing upload file or `ls --limit` with `--type` with their own message under `command_failed` instead of a generic `machine_error`.
 - Confirm safe moves when Dropbox assigns a new revision but returns the same file ID, exact destination, size and content hash; return the new revision for subsequent moves/restores. Changed or unprovable content remains unknown without replay.
 - Preserve safe mkdir's authoritative creation refusal when follow-up existing-folder verification fails; report `created: false` only after verifying exact folder metadata.
 - Honor valid Retry-After minimums on read retries, including HTTP-date and server errors, without timer overflow; preserve status/timing on cancellation and stop internal retries on malformed timing.

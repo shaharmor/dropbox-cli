@@ -88,6 +88,12 @@ test("bare commands show help on stderr and keep the JSON error on stdout", asyn
   }
 });
 
+test("human command failures keep their own error message", async () => {
+  const out=await cli(["ls","/Photos","--limit","1","--type","file"],"",false);
+  expect(out.exit).toBe(1);
+  expect(result(out).error).toEqual({code:"command_failed",message:"--limit and --type cannot be used together"});
+});
+
 const listEntry=`const listEntry=(tag,i,name)=>({'.tag':tag,id:'id:'+i,name,path_lower:('/photos/'+name).toLowerCase(),path_display:'/Photos/'+name,...(tag==='file'?{rev:'r'+i,size:3}:{})});`;
 test("paged listing retains 2050 direct entries across bounded explicit continuation", async () => {
   const setup=listEntry+`globalThis.fetch=async(url,init)=>{const body=JSON.parse(init.body); if(String(url).endsWith('/continue')) {assert.equal(body.cursor,'next');return Response.json({entries:Array.from({length:50},(_,i)=>listEntry('file',2000+i,'IMG_'+(2000+i)+'.jpg')),cursor:'end',has_more:false});} assert.equal(body.recursive,false);assert.equal(body.limit,2000);return Response.json({entries:Array.from({length:2000},(_,i)=>listEntry(i===0?'folder':'file',i,i===0?'deleted':'IMG_'+i+'.jpg')),cursor:'next',has_more:true});};`;

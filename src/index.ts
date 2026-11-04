@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 import { Command, CommanderError } from "commander";
 import { setVerbose } from "./lib/logger";
-import { setHumanMode, printSuccess, printMachineError } from "./lib/output";
-import { MachineError } from "./types";
+import { setHumanMode, printSuccess, printError, printMachineError } from "./lib/output";
+import { CredentialError, MachineError } from "./types";
 import { registerAuthCommands } from "./commands/auth";
 import { registerBulkMvCommand } from "./commands/bulk-mv";
 import { registerCpCommand } from "./commands/cp";
@@ -64,10 +64,13 @@ registerUploadCommand(program);
 try {
   await program.parseAsync();
 } catch (error) {
-  // Commander throws with exit code 0 for --help/--version; anything else becomes a JSON error.
-  if (!(error instanceof CommanderError && error.exitCode === 0)) {
-    printMachineError(error instanceof CommanderError
-      ? new MachineError("invalid_args", "Invalid command arguments. Use --help for usage.")
-      : error);
+  if (error instanceof CommanderError) {
+    // Commander throws with exit code 0 for --help/--version; anything else becomes a JSON error.
+    if (error.exitCode !== 0) printMachineError(new MachineError("invalid_args", "Invalid command arguments. Use --help for usage."));
+  } else if (error instanceof Error && !(error instanceof MachineError) && !(error instanceof CredentialError)) {
+    // Machine commands report their own errors, so only human-command failures reach here.
+    printError("command_failed", error.message);
+  } else {
+    printMachineError(error);
   }
 }
