@@ -52,7 +52,8 @@ async function readMoves(request: RequestOptions): Promise<Move[]> {
     if (!Array.isArray(moves) || moves.length < 1 || moves.length > MAX_MOVES) throw new Error();
     if (!moves.every(isValidMove) || !areDisjoint(moves)) throw new Error();
     return moves;
-  } catch {
+  } catch (error) {
+    if (error instanceof MachineError && error.code === "cancelled") throw error;
     throw new MachineError("invalid_args", "Batch stdin must contain 1–100 unique, non-overlapping checked moves within 512 KiB.");
   }
 }

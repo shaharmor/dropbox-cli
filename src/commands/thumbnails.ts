@@ -25,7 +25,8 @@ async function readRequests(request: RequestOptions): Promise<ThumbnailRequest[]
     if (!photos.every(isValidRequest)) throw new Error();
     if (new Set(photos.map(photo => photo.fileID)).size !== photos.length) throw new Error();
     return photos;
-  } catch {
+  } catch (error) {
+    if (error instanceof MachineError && error.code === "cancelled") throw error;
     throw new MachineError("invalid_args", "Thumbnail stdin must contain 1–25 unique identities and revisions within 64 KiB.");
   }
 }

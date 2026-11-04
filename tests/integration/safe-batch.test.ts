@@ -146,3 +146,10 @@ test('distinct parent folders are checked with bounded concurrency', async () =>
   expect(JSON.parse(out.stdout).ok).toBe(true);
   expect(Number(readFileSync(join(f.root,'parent-concurrency'),'utf8'))).toBe(4);
 });
+
+test('cancellation while stdin is still open reports cancelled, not invalid_args', async () => {
+  const out = await cli(entries, `Bun.stdin.stream=()=>new ReadableStream({pull(){return new Promise(()=>{});}});`, ['--timeout','1']);
+  expect(out.exit).not.toBe(0);
+  expect(JSON.parse(out.stdout).error.code).toBe('cancelled');
+  expect(calls()).toEqual([]);
+});

@@ -54,3 +54,9 @@ test("malformed batch, account mismatch, cancellation and response bound fail cl
   const out = await run(photos, setup, ['--expected-account','B']);
   expect(out.result.error.code).toBe('account_mismatch');
 });
+
+test("cancellation while stdin is still open reports cancelled, not invalid_args", async () => {
+  const out = await run(photos, `config.writeConfig(app);config.writeAuth(fake);Bun.stdin.stream=()=>new ReadableStream({pull(){return new Promise(()=>{});}});`, ['--timeout', '1']);
+  expect(out.exit).not.toBe(0);
+  expect(out.result.error.code).toBe('cancelled');
+});
