@@ -49,11 +49,11 @@ Default to Bun instead of Node.js.
 | Task       | Command                |
 | ---------- | ---------------------- |
 | Run CLI    | `bun run dev -- <args>` |
-| Test       | `bun test`             |
+| Test       | `bun run test`         |
 | Type-check | `bun run typecheck`    |
 | Build      | `bun run build`        |
 
-CI (`.github/workflows/ci.yml`) runs `bun run typecheck` and `bun test` on every PR and push to `master`. Run both before pushing.
+CI (`.github/workflows/ci.yml`) runs `bun run typecheck` and `bun run test` on every PR and push to `master`. Run both before pushing.
 
 ## CLI Output Contract
 
@@ -76,7 +76,7 @@ People pipe this CLI's output into scripts, so stdout must stay machine-readable
 
 ## Testing
 
-Use `bun test` (`import { describe, test, expect, mock } from "bun:test"`).
+Run tests with `bun run test` (`import { describe, test, expect, mock } from "bun:test"`). It adds `--isolate` because `mock.module` replaces a module for every file that runs after it in the same process; a bare `bun test` passes or fails depending on file order, which differs between macOS and CI's Linux runner.
 
 - `tests/` mirrors `src/`: `src/commands/ls.ts` → `tests/commands/ls.test.ts`.
 - Tests never call the real Dropbox API. Command tests mock `../../src/lib/api` and `../../src/lib/output` with `mock.module`; follow an existing test such as `tests/commands/mkdir.test.ts`.
