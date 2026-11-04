@@ -282,9 +282,9 @@ dropbox-cli mv id:PHOTO /Photos/deleted/IMG_2.jpg --safe \
 IDs, source paths and destinations must be unique; source/destination overlap is
 rejected. No wildcard, autorename or ownership transfer is allowed.
 
-The helper checks each distinct parent path/ID once, then checks source
-identity/revision/content/location and destination vacancy with at most four
-concurrent per-photo checks. A failed photo preflight excludes that photo; shared
+The helper checks each distinct parent path/ID once (at most four concurrent
+folder checks), then checks source identity/revision/content/location and
+destination vacancy with at most four concurrent per-photo checks. A failed photo preflight excludes that photo; shared
 folder failure stops the whole submission. Valid entries use one
 `files/move_batch_v2` request. For ten photos between the same two folders, the
 successful path is 23 Dropbox requests rather than the viewer's previous 90.

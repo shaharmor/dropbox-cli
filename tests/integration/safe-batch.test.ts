@@ -133,3 +133,16 @@ test('moves without a recorded contentHash are confirmed against the preflight h
   const changed = await cli(unhashed, `globalThis.fetch=async(url,init)=>String(url).endsWith('/move_batch_v2')?Response.json({'.tag':'complete',entries:entries.slice(0,2).map(e=>({'.tag':'success',success:{...moved(e),content_hash:'b'.repeat(64)}}))}):respond(url,init);`);
   expect(data(changed).entries.map(e=>e.outcome)).toEqual(['unknown','unknown']);
 });
+
+test('distinct parent folders are checked with bounded concurrency', async () => {
+  const spread = entries.map((e, i) => ({...e, sourcePath: `/Album${i}/${i}.jpg`, sourceParentID: `id:album${i}`}));
+  const out = await cli(spread, `let active=0,maxActive=0;globalThis.fetch=async(url,init)=>{
+    const path=JSON.parse(init.body||'{}').path;const album=/^\\/album(\\d)$/.exec(path);
+    if(!album)return respond(url,init);
+    active++;maxActive=Math.max(active,maxActive);await Bun.sleep(50);active--;
+    writeFileSync(join(root,'parent-concurrency'),String(maxActive));
+    return Response.json(folder('id:album'+album[1],'/Album'+album[1]));
+  };`);
+  expect(JSON.parse(out.stdout).ok).toBe(true);
+  expect(Number(readFileSync(join(f.root,'parent-concurrency'),'utf8'))).toBe(4);
+});

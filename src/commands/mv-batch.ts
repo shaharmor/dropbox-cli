@@ -183,12 +183,29 @@ async function verifyParentFolders(moves: Move[], request: RequestOptions): Prom
       expected.set(path, id);
     }
   }
-  for (const [path, id] of expected) {
+  await runBounded([...expected], async ([path, id]) => {
     const folder = await machineMetadata(path, request);
     if (folder[".tag"] !== "folder" || folder.id !== id) {
       throw new MachineError("folder_drift", "Batch folder identity changed.");
     }
-  }
+  });
+}
+
+/** Runs `task` over `items` with at most four in flight; the first failure stops new dispatch. */
+async function runBounded<T>(items: T[], task: (item: T, index: number) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++;
+      try {
+        await task(items[index]!, index);
+      } catch (error) {
+        next = items.length;
+        throw error;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(PREFLIGHT_CONCURRENCY, items.length) }, worker));
 }
 
 /**
@@ -197,19 +214,13 @@ async function verifyParentFolders(moves: Move[], request: RequestOptions): Prom
  */
 async function preflightAll(moves: Move[], request: RequestOptions): Promise<(Move | Entry)[]> {
   const results: (Move | Entry)[] = [...moves];
-  let next = 0;
-  const worker = async () => {
-    while (next < moves.length) {
-      const index = next++;
-      const move = moves[index]!;
-      try {
-        results[index] = await preflight(move, request);
-      } catch (error) {
-        results[index] = failedEntry(move, error);
-      }
+  await runBounded(moves, async (move, index) => {
+    try {
+      results[index] = await preflight(move, request);
+    } catch (error) {
+      results[index] = failedEntry(move, error);
     }
-  };
-  await Promise.all(Array.from({ length: Math.min(PREFLIGHT_CONCURRENCY, moves.length) }, worker));
+  });
   return results;
 }
 
