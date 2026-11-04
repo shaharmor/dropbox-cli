@@ -1,155 +1,261 @@
 import type { Command } from "commander";
 import { posix } from "path";
-import { exactPath, isNotFound, machineMetadata, machineRpc, validateMetadata, waitForRequest } from "../lib/api";
+import {
+  exactPath, isContentHash, isId, isNotFound, isText, machineMetadata, machineRpc, pathExists, validateMetadata,
+} from "../lib/machine-api";
 import { runMachine } from "../lib/output";
-import { CredentialError, MachineError, type MachineMetadata, type MachineOptions, type RequestOptions } from "../types";
+import { readStdinJSON } from "../lib/streams";
+import {
+  CredentialError, MachineError,
+  type MachineMetadata, type MachineOptions, type MutationOutcome, type RequestOptions,
+} from "../types";
 
+/** One reviewed photo move, as recorded by the viewer and supplied on stdin. */
 type Move = {
-  fileID: string; revision: string; contentHash?: string; size: number;
-  sourcePath: string; destinationPath: string; sourceParentID: string; destinationParentID: string;
+  fileID: string;
+  revision: string;
+  contentHash?: string;
+  size: number;
+  sourcePath: string;
+  destinationPath: string;
+  sourceParentID: string;
+  destinationParentID: string;
 };
-type Entry = { fileID: string; outcome: "confirmed" | "pending" | "not_submitted" | "refused" | "unknown";
-  metadata?: MachineMetadata; error?: { code: string; message: string; details: MachineError["details"] } };
-const MAX_BYTES = 512 * 1024;
-const validText = (v: unknown): v is string => typeof v === "string" && v.length > 0 && !v.includes("\0");
-const validID = (v: unknown): v is string => validText(v) && v.startsWith("id:") && v.length > 3;
+
+type Entry = {
+  fileID: string;
+  outcome: "confirmed" | "pending" | MutationOutcome;
+  metadata?: MachineMetadata;
+  error?: { code: string; message: string; details: MachineError["details"] };
+};
+
+type BatchResult = { entries: (Entry | undefined)[]; async_job_id?: string };
+
+type BatchEntryResult = {
+  ".tag"?: string;
+  success?: unknown;
+  failure?: { ".tag"?: string; relocation_error?: { ".tag"?: string } };
+} | null;
+
+const MAX_STDIN_BYTES = 512 * 1024;
+const MAX_MOVES = 100;
+const MAX_JOB_ID_LENGTH = 4096;
+const PREFLIGHT_CONCURRENCY = 4;
+
+// ---------------------------------------------------------------------------
+// Input
+// ---------------------------------------------------------------------------
 
 async function readMoves(request: RequestOptions): Promise<Move[]> {
-  const reader = Bun.stdin.stream().getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
   try {
-    while (true) {
-      const part = await waitForRequest(reader.read(), request.signal);
-      if (part.done) break;
-      size += part.value.length;
-      if (size > MAX_BYTES) throw new Error();
-      chunks.push(part.value);
-    }
-    const entries = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Move[];
-    if (!Array.isArray(entries) || entries.length < 1 || entries.length > 100) throw new Error();
-    const ids = new Set<string>(), sources = new Set<string>(), destinations = new Set<string>();
-    for (const e of entries) {
-      if (!e || !validID(e.fileID) || !validText(e.revision) || !Number.isSafeInteger(e.size) || e.size < 0 ||
-          (e.contentHash !== undefined && (typeof e.contentHash !== "string" || !/^[0-9a-f]{64}$/.test(e.contentHash))) ||
-          !validText(e.sourcePath) || !exactPath(e.sourcePath) || !validText(e.destinationPath) || !exactPath(e.destinationPath) ||
-          !validID(e.sourceParentID) || !validID(e.destinationParentID) || ids.has(e.fileID) ||
-          sources.has(e.sourcePath.toLowerCase()) || destinations.has(e.destinationPath.toLowerCase())) throw new Error();
-      ids.add(e.fileID); sources.add(e.sourcePath.toLowerCase()); destinations.add(e.destinationPath.toLowerCase());
-    }
-    if ([...sources].some(path => destinations.has(path))) throw new Error();
-    return entries;
+    const moves = await readStdinJSON(MAX_STDIN_BYTES, request.signal) as Move[];
+    if (!Array.isArray(moves) || moves.length < 1 || moves.length > MAX_MOVES) throw new Error();
+    if (!moves.every(isValidMove) || !areDisjoint(moves)) throw new Error();
+    return moves;
   } catch {
     throw new MachineError("invalid_args", "Batch stdin must contain 1–100 unique, non-overlapping checked moves within 512 KiB.");
-  } finally { void reader.cancel().catch(() => {}); reader.releaseLock(); }
+  }
 }
 
-function failure(move: Move, error: unknown, forceUnknown = false): Entry {
-  const e = error instanceof MachineError ? error : error instanceof CredentialError
-    ? new MachineError(error.code, "Dropbox connection needs attention.")
-    : new MachineError("invalid_response", "Batch could not be verified.");
-  const outcome = forceUnknown ? "unknown" : e.details.outcome;
-  return { fileID: move.fileID, outcome, error: { code: e.code, message: "Move could not be confirmed.", details: { ...e.details, outcome } } };
+function isValidMove(move: Move): boolean {
+  return !!move && isId(move.fileID) && isText(move.revision) &&
+    Number.isSafeInteger(move.size) && move.size >= 0 &&
+    (move.contentHash === undefined || isContentHash(move.contentHash)) &&
+    isText(move.sourcePath) && exactPath(move.sourcePath) &&
+    isText(move.destinationPath) && exactPath(move.destinationPath) &&
+    isId(move.sourceParentID) && isId(move.destinationParentID);
 }
+
+/** No file, source or destination appears twice, and no move targets another move's source. */
+function areDisjoint(moves: Move[]): boolean {
+  const ids = new Set(moves.map(move => move.fileID));
+  const sources = new Set(moves.map(move => move.sourcePath.toLowerCase()));
+  const destinations = new Set(moves.map(move => move.destinationPath.toLowerCase()));
+  const unique = ids.size === moves.length && sources.size === moves.length && destinations.size === moves.length;
+  return unique && ![...sources].some(path => destinations.has(path));
+}
+
+function isJobId(value: unknown): value is string {
+  return isText(value) && value.length <= MAX_JOB_ID_LENGTH;
+}
+
+// ---------------------------------------------------------------------------
+// Entries
+// ---------------------------------------------------------------------------
+
+function pendingEntry(move: Move): Entry {
+  return { fileID: move.fileID, outcome: "pending" };
+}
+
+function failedEntry(move: Move, error: unknown, forceUnknown = false): Entry {
+  const failure = error instanceof MachineError ? error
+    : error instanceof CredentialError ? new MachineError(error.code, "Dropbox connection needs attention.")
+    : new MachineError("invalid_response", "Batch could not be verified.");
+  const outcome = forceUnknown ? "unknown" : failure.details.outcome;
+  return {
+    fileID: move.fileID,
+    outcome,
+    error: { code: failure.code, message: "Move could not be confirmed.", details: { ...failure.details, outcome } },
+  };
+}
+
 function sameContent(metadata: MachineMetadata, move: Move): boolean {
   return metadata[".tag"] === "file" && metadata.id === move.fileID && metadata.size === move.size &&
     (move.contentHash === undefined ? metadata.rev === move.revision : metadata.content_hash === move.contentHash);
 }
-function completion(value: unknown, moves: Move[]): Entry[] {
-  const response = value as { ".tag"?: string; entries?: unknown[] } | null;
-  if (response?.[".tag"] !== "complete" || !Array.isArray(response.entries) || response.entries.length !== moves.length) {
-    return moves.map(e => failure(e, null, true));
+
+/** Maps a `complete` batch result back onto the submitted moves, in order. */
+function completedEntries(value: unknown, moves: Move[]): Entry[] {
+  const result = value as { ".tag"?: string; entries?: unknown[] } | null;
+  if (result?.[".tag"] !== "complete" || !Array.isArray(result.entries) || result.entries.length !== moves.length) {
+    return moves.map(move => failedEntry(move, null, true));
   }
-  return moves.map((move, index) => {
-    const item = response.entries![index] as { ".tag"?: string; success?: unknown; failure?: { ".tag"?: string; relocation_error?: { ".tag"?: string } } } | null;
-    if (item?.[".tag"] === "success") {
-      try {
-        const metadata = validateMetadata(item.success);
-        if (!sameContent(metadata, move) || metadata.path_lower !== move.destinationPath.toLowerCase()) throw new Error();
-        return { fileID: move.fileID, outcome: "confirmed", metadata };
-      } catch { return failure(move, null, true); }
-    }
-    // internal_error explicitly requires reconciliation in Dropbox's API contract.
-    // Unknown tags are not refusal evidence; never echo untrusted provider text.
-    const tag = item?.failure?.[".tag"];
-    const refused = item?.[".tag"] === "failure" && (tag === "too_many_write_operations" ||
-      (tag === "relocation_error" && validText(item.failure?.relocation_error?.[".tag"])));
-    return failure(move, new MachineError("batch_entry_failed", "Move did not complete.", {
-      outcome: refused ? "refused" : "unknown",
-    }));
-  });
+  return moves.map((move, index) => completedEntry(move, result.entries![index] as BatchEntryResult));
 }
 
-async function submit(moves: Move[], request: RequestOptions) {
-  // All folder checks are shared, bounded by the batch, and finish before any move.
-  const parents = new Map<string, string>();
-  for (const e of moves) for (const [path, id] of [[posix.dirname(e.sourcePath).toLowerCase(), e.sourceParentID], [posix.dirname(e.destinationPath).toLowerCase(), e.destinationParentID]] as const) {
-    if (parents.has(path) && parents.get(path) !== id) throw new MachineError("invalid_args", "Conflicting parent identities.");
-    parents.set(path, id);
-  }
-  for (const [path, id] of parents) {
-    const folder = await machineMetadata(path, request);
-    if (folder[".tag"] !== "folder" || folder.id !== id) throw new MachineError("folder_drift", "Batch folder identity changed.");
-  }
-  const results: (Entry | undefined)[] = new Array(moves.length);
-  let next = 0;
-  await Promise.all(Array.from({ length: Math.min(4, moves.length) }, async () => {
-    while (next < moves.length) {
-      const index = next++, e = moves[index]!;
-      try {
-        let photo: MachineMetadata;
-        try { photo = await machineMetadata(e.fileID, request); }
-        catch (error) {
-          if (isNotFound(error)) throw new MachineError("source_missing", "Reviewed source no longer exists.");
-          throw error;
-        }
-        if (!sameContent(photo, e) || photo.rev !== e.revision) throw new MachineError("revision_changed", "Reviewed content changed.");
-        if (photo.path_lower !== e.sourcePath.toLowerCase()) throw new MachineError("location_changed", "Reviewed source moved.");
-        try {
-          await machineMetadata(e.destinationPath.toLowerCase(), request);
-          throw new MachineError("destination_conflict", "Destination already exists.");
-        } catch (error) { if (!isNotFound(error)) throw error; }
-      } catch (error) { results[index] = failure(e, error); }
-    }
-  }));
-  const admitted = moves.filter((_, index) => !results[index]);
-  let job: string | undefined;
-  if (admitted.length) {
-    let submitted: Entry[];
+function completedEntry(move: Move, item: BatchEntryResult): Entry {
+  if (item?.[".tag"] === "success") {
+    let metadata: MachineMetadata;
     try {
-      const response = await machineRpc<{ ".tag"?: string; async_job_id?: string }>("files/move_batch_v2", {
-        entries: admitted.map(e => ({ from_path: e.fileID, to_path: e.destinationPath })), autorename: false, allow_ownership_transfer: false,
-      }, request);
-      if (response?.[".tag"] === "async_job_id" && validText(response.async_job_id) && response.async_job_id.length <= 4096) {
-        job = response.async_job_id;
-        submitted = admitted.map(e => ({ fileID: e.fileID, outcome: "pending" }));
-      } else { submitted = completion(response, admitted); }
-    } catch (error) { submitted = admitted.map(e => failure(e, error)); }
-    let index = 0;
-    for (let i = 0; i < moves.length; i++) if (!results[i]) results[i] = submitted[index++];
+      metadata = validateMetadata(item.success);
+    } catch {
+      return failedEntry(move, null, true);
+    }
+    if (!sameContent(metadata, move) || metadata.path_lower !== move.destinationPath.toLowerCase()) {
+      return failedEntry(move, null, true);
+    }
+    return { fileID: move.fileID, outcome: "confirmed", metadata };
   }
-  return { entries: results, ...(job ? { async_job_id: job } : {}) };
+  // internal_error explicitly requires reconciliation in Dropbox's API contract.
+  // Unknown tags are not refusal evidence; never echo untrusted provider text.
+  const tag = item?.failure?.[".tag"];
+  const refused = item?.[".tag"] === "failure" && (tag === "too_many_write_operations" ||
+    (tag === "relocation_error" && isText(item.failure?.relocation_error?.[".tag"])));
+  return failedEntry(move, new MachineError("batch_entry_failed", "Move did not complete.", {
+    outcome: refused ? "refused" : "unknown",
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Submission
+// ---------------------------------------------------------------------------
+
+/** Checks every move, then submits the ones that passed as a single batch. */
+async function submit(moves: Move[], request: RequestOptions): Promise<BatchResult> {
+  await verifyParentFolders(moves, request);
+  const rejected = await preflightAll(moves, request);
+  const admitted = moves.filter((_, index) => !rejected[index]);
+  if (!admitted.length) return { entries: rejected };
+
+  const submitted = await submitBatch(admitted, request);
+  let next = 0;
+  const entries = rejected.map(entry => entry ?? submitted.entries[next++]);
+  return { entries, ...(submitted.asyncJobId ? { async_job_id: submitted.asyncJobId } : {}) };
+}
+
+// All folder checks are shared, bounded by the batch, and finish before any move.
+async function verifyParentFolders(moves: Move[], request: RequestOptions): Promise<void> {
+  const expected = new Map<string, string>();
+  for (const move of moves) {
+    const parents = [
+      [posix.dirname(move.sourcePath).toLowerCase(), move.sourceParentID],
+      [posix.dirname(move.destinationPath).toLowerCase(), move.destinationParentID],
+    ] as const;
+    for (const [path, id] of parents) {
+      if (expected.has(path) && expected.get(path) !== id) {
+        throw new MachineError("invalid_args", "Conflicting parent identities.");
+      }
+      expected.set(path, id);
+    }
+  }
+  for (const [path, id] of expected) {
+    const folder = await machineMetadata(path, request);
+    if (folder[".tag"] !== "folder" || folder.id !== id) {
+      throw new MachineError("folder_drift", "Batch folder identity changed.");
+    }
+  }
+}
+
+/** Runs `preflight` with bounded concurrency; returns a failed entry per rejected move. */
+async function preflightAll(moves: Move[], request: RequestOptions): Promise<(Entry | undefined)[]> {
+  const rejected: (Entry | undefined)[] = moves.map(() => undefined);
+  let next = 0;
+  const worker = async () => {
+    while (next < moves.length) {
+      const index = next++;
+      const move = moves[index]!;
+      try {
+        await preflight(move, request);
+      } catch (error) {
+        rejected[index] = failedEntry(move, error);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(PREFLIGHT_CONCURRENCY, moves.length) }, worker));
+  return rejected;
+}
+
+async function preflight(move: Move, request: RequestOptions): Promise<void> {
+  let photo: MachineMetadata;
+  try {
+    photo = await machineMetadata(move.fileID, request);
+  } catch (error) {
+    if (isNotFound(error)) throw new MachineError("source_missing", "Reviewed source no longer exists.");
+    throw error;
+  }
+  if (!sameContent(photo, move) || photo.rev !== move.revision) {
+    throw new MachineError("revision_changed", "Reviewed content changed.");
+  }
+  if (photo.path_lower !== move.sourcePath.toLowerCase()) {
+    throw new MachineError("location_changed", "Reviewed source moved.");
+  }
+  if (await pathExists(move.destinationPath, request)) {
+    throw new MachineError("destination_conflict", "Destination already exists.");
+  }
+}
+
+async function submitBatch(moves: Move[], request: RequestOptions): Promise<{ entries: Entry[]; asyncJobId?: string }> {
+  try {
+    const response = await machineRpc<{ ".tag"?: string; async_job_id?: string }>("files/move_batch_v2", {
+      entries: moves.map(move => ({ from_path: move.fileID, to_path: move.destinationPath })),
+      autorename: false,
+      allow_ownership_transfer: false,
+    }, request);
+    if (response?.[".tag"] === "async_job_id" && isJobId(response.async_job_id)) {
+      return { entries: moves.map(pendingEntry), asyncJobId: response.async_job_id };
+    }
+    return { entries: completedEntries(response, moves) };
+  } catch (error) {
+    return { entries: moves.map(move => failedEntry(move, error)) };
+  }
+}
+
+/** Read-only status check of an accepted batch. Never resubmits. */
+async function poll(jobId: string, moves: Move[], request: RequestOptions): Promise<BatchResult> {
+  if (!isJobId(jobId)) throw new MachineError("invalid_args", "Invalid batch job identity.");
+  try {
+    const response = await machineRpc<{ ".tag"?: string }>("files/move_batch/check_v2", { async_job_id: jobId }, request);
+    if (response?.[".tag"] === "in_progress") return { async_job_id: jobId, entries: moves.map(pendingEntry) };
+    return { entries: completedEntries(response, moves) };
+  } catch (error) {
+    // Dropbox no longer knows an invalid job, so there is nothing left to poll.
+    const pollable = !(error instanceof MachineError && error.code === "invalid_async_job_id");
+    return {
+      entries: moves.map(move => failedEntry(move, error, true)),
+      ...(pollable ? { async_job_id: jobId } : {}),
+    };
+  }
 }
 
 export function registerSafeBatchCommand(program: Command): void {
-  program.command("mv-batch")
+  program
+    .command("mv-batch")
     .description("Checked ID-addressed batch moves from bounded JSON on stdin; --job-id only polls an existing batch")
     .requiredOption("--expected-account <id>", "Expected Dropbox account")
     .option("--timeout <seconds>", "Request deadline (1–600 seconds)")
     .option("--job-id <id>", "Poll this job with its exact submitted entries on stdin; never resubmit")
-    .action((options: MachineOptions & {jobId?: string}) => runMachine(options, async request => {
+    .action((options: MachineOptions & { jobId?: string }) => runMachine(options, async request => {
       const moves = await readMoves(request);
-      if (options.jobId !== undefined) {
-        if (!validText(options.jobId) || options.jobId.length > 4096) throw new MachineError("invalid_args", "Invalid batch job identity.");
-        try {
-          const response = await machineRpc<{ ".tag"?: string }>("files/move_batch/check_v2", {async_job_id: options.jobId}, request);
-          if (response?.[".tag"] === "in_progress") return { async_job_id: options.jobId, entries: moves.map(e => ({fileID:e.fileID,outcome:"pending"})) };
-          return { entries: completion(response, moves) };
-        } catch (error) {
-          return { entries: moves.map(e => failure(e, error, true)),
-            ...(error instanceof MachineError && error.code === "invalid_async_job_id" ? {} : { async_job_id: options.jobId }) };
-        }
-      }
-      return submit(moves, request);
+      return options.jobId !== undefined ? poll(options.jobId, moves, request) : submit(moves, request);
     }));
 }

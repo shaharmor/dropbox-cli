@@ -4,6 +4,10 @@ import { homedir } from "os";
 import { join } from "path";
 import { CredentialError } from "../types";
 
+// Cross-process credential lock. An open SQLite write transaction (`BEGIN IMMEDIATE`) is used
+// purely as an OS-backed mutex: the OS releases it if the holder dies, so there is no stale
+// lock file to clean up. The database never stores data; credentials live in config.ts JSON.
+
 const LOCK_WAIT_MS = 2000;
 export const MAX_REFRESH_MS = 15000;
 

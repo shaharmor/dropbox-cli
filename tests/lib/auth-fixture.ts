@@ -20,7 +20,12 @@ export function fixture() {
       const root = ${JSON.stringify(root)};
       const config = await import(${JSON.stringify(source + "lib/config.ts")});
       const auth = await import(${JSON.stringify(source + "lib/auth.ts")});
-      const api = await import(${JSON.stringify(source + "lib/api.ts")});
+      const api = {
+        ...await import(${JSON.stringify(source + "lib/api.ts")}),
+        ...await import(${JSON.stringify(source + "lib/credentials.ts")}),
+        ...await import(${JSON.stringify(source + "lib/machine-api.ts")}),
+        ...await import(${JSON.stringify(source + "lib/streams.ts")}),
+      };
       const fake = { access_token: 'fake-A', refresh_token: 'fake-refresh', expires_at: Math.floor(Date.now()/1000)+3600, account_id: 'A', account_email: 'a@example.invalid' };
       const app = { client_id: 'fake-client', client_secret: 'fake-secret' };
       const waitFor = async (name) => { const until = Date.now()+10000; while(!existsSync(join(root,name))) { if(Date.now()>until) throw new Error('Barrier timed out: '+name); await Bun.sleep(10); } };

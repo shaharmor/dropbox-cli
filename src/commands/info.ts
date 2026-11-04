@@ -1,5 +1,6 @@
 import type { Command } from "commander";
-import { rpc, machineMetadata } from "../lib/api";
+import { rpc } from "../lib/api";
+import { machineMetadata } from "../lib/machine-api";
 import { printSuccess, formatBytes, formatDate, runMachine } from "../lib/output";
 import { logHuman } from "../lib/logger";
 import type { DropboxEntry, MachineOptions } from "../types";

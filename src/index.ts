@@ -37,9 +37,13 @@ program.hook("preAction", (thisCommand) => {
 
 program.command("capabilities")
   .description("Describe the versioned viewer machine contract without authentication")
-  .action(() => printSuccess({ protocol_version: 1, capabilities: [
-    "account-status", "login-pkce", "list-page", "metadata", "download-original", "download-progress", "ensure-directory", "move-single", "move-batch", "thumbnail-batch",
-  ] }));
+  .action(() => printSuccess({
+    protocol_version: 1,
+    capabilities: [
+      "account-status", "login-pkce", "list-page", "metadata", "download-original",
+      "download-progress", "ensure-directory", "move-single", "move-batch", "thumbnail-batch",
+    ],
+  }));
 
 // Register all commands (alphabetical order)
 registerAuthCommands(program);
@@ -56,10 +60,13 @@ registerShareCommand(program);
 registerThumbnailsCommand(program);
 registerUploadCommand(program);
 
-try { await program.parseAsync(); }
-catch (error) {
+try {
+  await program.parseAsync();
+} catch (error) {
+  // Commander throws with exit code 0 for --help/--version; anything else becomes a JSON error.
   if (!(error instanceof CommanderError && error.exitCode === 0)) {
     printMachineError(error instanceof CommanderError
-      ? new MachineError("invalid_args", "Invalid command arguments. Use --help for usage.") : error);
+      ? new MachineError("invalid_args", "Invalid command arguments. Use --help for usage.")
+      : error);
   }
 }
