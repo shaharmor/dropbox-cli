@@ -110,6 +110,17 @@ for(const failure of ['refused','different-account']) {
   });
 }
 
+test("transient token-endpoint throttling or outages report connection_error and keep credentials", async () => {
+  expect(await f.run(`${seedLegacy}
+    for(const status of [429,500,503]) {
+      globalThis.fetch=async()=>Response.json({error:'DO-NOT-LEAK'},{status});
+      await assert.rejects(()=>api.getCredentialSnapshot({expectedAccountId:'A'}),e=>
+        e.code==='connection_error' && !e.message.includes('DO-NOT-LEAK'));
+      assert.equal(readFileSync(authPath,'utf8'),legacyBytes);
+    }
+  `)).toMatchObject({ exit: 0, stderr: "" });
+});
+
 test("malformed legacy records fail without secrets", async () => {
   expect(await f.run(`${seedLegacy}
     writeFileSync(authPath,'{"access_token":"DO-NOT-LEAK"');

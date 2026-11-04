@@ -338,7 +338,9 @@ reconnect guidance, retaining bounded provider tags and request IDs. A read may
 recover authentication once; a submitted mutation never refreshes or replays
 itself and retains `refused` terminality for a structured 401. If the one read
 recovery fails with `auth_error`, retained details describe the original read's
-401, not the token endpoint's response. Optional bounded first-401 diagnostics
+401, not the token endpoint's response. A token endpoint that is throttled or
+unavailable (any status other than 400/401) reports `connection_error`, not
+`auth_error`, so a transient outage never asks the user to reconnect. Optional bounded first-401 diagnostics
 have a one-second collection limit; malformed/stalled diagnostics do not prevent
 otherwise-permitted recovery, and request cancellation still stops dispatch.
 

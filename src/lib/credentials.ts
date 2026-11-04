@@ -58,7 +58,13 @@ async function refreshAccessToken(
         client_secret: config.client_secret,
       }),
     }));
-    if (!response.ok) throw new CredentialError("auth_error", "Token refresh failed. Reconnect the account.");
+    if (!response.ok) {
+      // Only an explicit OAuth refusal means reconnect; throttling or outages are transient.
+      if (response.status === 400 || response.status === 401) {
+        throw new CredentialError("auth_error", "Token refresh failed. Reconnect the account.");
+      }
+      throw new CredentialError("connection_error", "Cannot refresh credentials. Check the connection and retry.");
+    }
 
     const data = await deadline.wait(response.json()) as RefreshResponse | null;
     if (!isValidRefresh(data, auth.account_id)) {
