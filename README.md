@@ -250,12 +250,12 @@ dropbox-cli mv id:PHOTO /Photos/deleted/IMG_2.jpg --safe \
   non-root parent folders; the Dropbox account root is not a synthetic folder ID.
 - **`download --output-file`** requires exactly one `rev:` source, `--expected-id`,
   and an absolute normalized output path. Optional `--expected-hash` checks the
-  inventoried Dropbox hash too. The helper checks returned ID/revision/size and,
-  when supplied, the Dropbox content hash (SHA-256 of the concatenated SHA-256
-  digests of 4 MiB blocks). It streams bytes without whole-file buffering into a
+  inventoried Dropbox hash too. The helper checks returned ID/revision/size and
+  requires the Dropbox content hash (SHA-256 of the concatenated SHA-256
+  digests of 4 MiB blocks); a response without one fails as `identity_mismatch`. It streams bytes without whole-file buffering into a
   unique exclusive mode-0600 `.dropbox-UUID.part` file in the existing output
   directory. Only after integrity checks, sync and close does a no-replace hard
-  link publish the exact output. Success returns `{id, rev, content_hash?, size,
+  link publish the exact output. Success returns `{id, rev, content_hash, size,
   local_path}`. It never infers an output basename from remote metadata.
 - **`mkdir --safe`** validates the exact parent location/ID, creates without
   autorename, or inspects an existing folder (including a terminal folder conflict

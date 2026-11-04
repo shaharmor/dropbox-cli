@@ -75,7 +75,7 @@ function isValidDownload(sources: string[], options: OutputOptions): boolean {
 function matchesRecordedFile(metadata: Record<string, unknown>, revision: string, options: OutputOptions): boolean {
   return metadata.id === options.expectedId && metadata.rev === revision &&
     Number.isSafeInteger(metadata.size) && (metadata.size as number) >= 0 &&
-    (metadata.content_hash === undefined || isContentHash(metadata.content_hash)) &&
+    isContentHash(metadata.content_hash) &&
     (options.expectedHash === undefined || metadata.content_hash === options.expectedHash);
 }
 
@@ -151,7 +151,7 @@ async function downloadOriginal(sources: string[], options: OutputOptions): Prom
         reportProgress(total);
       }
       reportProgress(total, true);
-      if (total !== size || (meta.content_hash !== undefined && meta.content_hash !== hasher.digest())) {
+      if (total !== size || meta.content_hash !== hasher.digest()) {
         throw new MachineError("integrity_error", "Download size or Dropbox content hash did not match.");
       }
 

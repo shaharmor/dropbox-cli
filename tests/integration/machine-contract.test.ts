@@ -349,7 +349,9 @@ for(const [name, expectedHash, changeMetadata, duringDownload, code] of [
   ['different file ID',recordedHash,"returned.id='id:replacement';",'','identity_mismatch'],
   ['different revision',recordedHash,"returned.rev='r2';",'','identity_mismatch'],
   ['corrupt bytes despite matching metadata',recordedHash,'','bytes[0] ^= 1;','integrity_error'],
-]) test(`recorded --expected-hash rejects ${name} before publication and removes its staging file`, async () => {
+  ['missing provider hash without a recorded hash',undefined,'delete returned.content_hash;','','identity_mismatch'],
+  ['corrupt same-size bytes without a recorded hash',undefined,'','bytes[0] ^= 1;','integrity_error'],
+]) test(`download rejects ${name} before publication and removes its staging file`, async () => {
   const path=join(realpathSync(f.root),'original.HEIC');
   const out=await cli(downloadArgs(path,expectedHash),recordedDownloadSetup(path,changeMetadata,duringDownload));
   expect(out.exit).not.toBe(0);expect(out.stderr).toBe('');
@@ -435,7 +437,7 @@ test("stream errors, integrity mismatch, cancellation and publication collision 
     const out=await cli([...downloadArgs(path),'--timeout','1'],`
       globalThis.fetch=async()=>new Response(new ReadableStream({async start(c){c.enqueue(new Uint8Array([1,2,3]));
         ${fault==='stream'?"c.error(new Error('network lost'));":fault==='cancel'?"await new Promise(()=>{});":fault==='collision'?`writeFileSync(${JSON.stringify(path)},'keep');c.close();`:"c.close();"}
-      }}),{headers:{'Dropbox-API-Result':JSON.stringify({id:'${fault==='identity'?'id:wrong':'id:photo'}',rev:'r1',size:${fault==='size'?4:3},${fault==='hash'?"content_hash:'0'.repeat(64),":""}})}});
+      }}),{headers:{'Dropbox-API-Result':JSON.stringify({id:'${fault==='identity'?'id:wrong':'id:photo'}',rev:'r1',size:${fault==='size'?4:3},content_hash:'${fault==='hash'?'0'.repeat(64):'19c6197e2140b9d034fb20b9ac7bb753a41233caf1e1dafda7316a99cef41416'}'})}});
     `);
     expect(out.exit).not.toBe(0); expect(result(out).ok).toBe(false);
     if(fault==='collision') expect(readFileSync(path,'utf8')).toBe('keep'); else expect(existsSync(path)).toBe(false);
@@ -550,7 +552,7 @@ test("SIGTERM during read backoff exits promptly and releases abort listeners", 
 test("SIGTERM cancels a streaming original and SIGKILL leaves only an unpublished staging file", async () => {
   for(const signal of ['SIGTERM','SIGKILL'] as const) {
     const output=join(realpathSync(f.root),signal);
-    const worker=f.start(`${seed} globalThis.fetch=async()=>new Response(new ReadableStream({start(c){c.enqueue(new Uint8Array([1]));writeFileSync(join(root,'${signal}-ready'),'');}}),{headers:{'Dropbox-API-Result':JSON.stringify({id:'id:photo',rev:'r1',size:300})}});process.argv=['bun','dropbox-cli',...${JSON.stringify(downloadArgs(output))}];await import(${JSON.stringify(entry)});`);
+    const worker=f.start(`${seed} globalThis.fetch=async()=>new Response(new ReadableStream({start(c){c.enqueue(new Uint8Array([1]));writeFileSync(join(root,'${signal}-ready'),'');}}),{headers:{'Dropbox-API-Result':JSON.stringify({id:'id:photo',rev:'r1',size:300,content_hash:'0'.repeat(64)})}});process.argv=['bun','dropbox-cli',...${JSON.stringify(downloadArgs(output))}];await import(${JSON.stringify(entry)});`);
     const deadline=Date.now()+5000;
     while(!existsSync(join(f.root,signal+'-ready'))) {if(Date.now()>deadline)throw new Error('Fixture did not start');await Bun.sleep(10);}
     worker.child.kill(signal); const out=await worker.result();
