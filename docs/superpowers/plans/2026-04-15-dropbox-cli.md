@@ -22,7 +22,7 @@
 - [ ] **Step 1: Initialize project**
 
 ```bash
-cd /Users/shaharmor/Documents/code/shaharmor/dropbox-cli
+cd dropbox-cli
 bun init -y
 ```
 
