@@ -41,6 +41,7 @@
 - Persist owner-only credential JSON with atomic replacement and durable generation fences so stale authorization cannot resurrect logout or overwrite a newer login.
 - Validate OAuth state, retain PKCE, bind callbacks only to loopback, verify account identity, and close authorization resources on errors, cancellation, or timeout.
 - Keep in-flight requests bound to their original account and redact credential echoes in API errors.
+- `bulk-mv` now reports why each file failed to move: human output shows the reason per file, and JSON output includes a `failures` list of `{ path, reason }`
 
 ### Changed
 - Per explicit owner override, reject/restore do not gate on known or matching sharing contexts, including separately shared `deleted` folders. Sharing metadata is informational; no sharing scopes, permissions or ownership-transfer options are added. Such moves may expose photos to destination collaborators.

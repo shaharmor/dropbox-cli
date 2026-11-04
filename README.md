@@ -26,7 +26,7 @@ bun install
 dropbox-cli auth login
 ```
 
-On first run you'll be prompted for your app key and secret. A browser window opens for OAuth2 authorization. Credentials and tokens are stored locally in `~/.config/dropbox-cli/`.
+On first run you'll be prompted for your app key and secret. A browser window opens for OAuth2 authorization. Credentials and tokens are stored locally in `~/.dropbox-cli/`.
 
 ## Usage
 
