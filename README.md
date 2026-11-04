@@ -293,6 +293,11 @@ The response is `{entries, async_job_id?}` in **original input order**. Each ent
 contains `fileID` and `outcome`: `confirmed` (with validated `metadata`), `pending`,
 or `not_submitted` / `refused` / `unknown` (with structured `error`). Dropbox
 `internal_error` and malformed receipts remain unknown, never safe to replay.
+A submitted move is confirmed when the returned ID, destination, size and content
+hash match the preflight file; without `contentHash` on stdin the helper uses the
+preflight hash, so a new revision does not leave the move unknown. Polling does no
+preflight, so pass `contentHash` with `--job-id` entries, or a moved file can be
+confirmed only if its revision is unchanged.
 
 For an async receipt, retain the job ID and **only the pending entries**, in their
 original order. Pass that exact subset on stdin to

@@ -143,13 +143,17 @@ function completedEntry(move: Move, item: BatchEntryResult): Entry {
 /** Checks every move, then submits the ones that passed as a single batch. */
 async function submit(moves: Move[], request: RequestOptions): Promise<BatchReport> {
   await verifyParentFolders(moves, request);
-  const rejected = await preflightAll(moves, request);
-  const admitted = moves.filter((_, index) => !rejected[index]);
-  if (!admitted.length) return { entries: rejected };
+  const checked = await preflightAll(moves, request);
+  const admitted = checked.filter((result): result is Move => !isEntry(result));
+  if (!admitted.length) return { entries: checked as Entry[] };
 
   const submitted = await submitBatch(admitted, request);
   let next = 0;
-  return { ...submitted, entries: rejected.map(entry => entry ?? submitted.entries[next++]) };
+  return { ...submitted, entries: checked.map(result => isEntry(result) ? result : submitted.entries[next++]) };
+}
+
+function isEntry(value: Move | Entry): value is Entry {
+  return "outcome" in value;
 }
 
 // All folder checks are shared, bounded by the batch, and finish before any move.
@@ -175,26 +179,33 @@ async function verifyParentFolders(moves: Move[], request: RequestOptions): Prom
   }
 }
 
-/** Runs `preflight` with bounded concurrency; returns a failed entry per rejected move. */
-async function preflightAll(moves: Move[], request: RequestOptions): Promise<(Entry | undefined)[]> {
-  const rejected: (Entry | undefined)[] = moves.map(() => undefined);
+/**
+ * Runs `preflight` with bounded concurrency; returns, per input, the checked move to submit or
+ * the failed entry that excludes it.
+ */
+async function preflightAll(moves: Move[], request: RequestOptions): Promise<(Move | Entry)[]> {
+  const results: (Move | Entry)[] = [...moves];
   let next = 0;
   const worker = async () => {
     while (next < moves.length) {
       const index = next++;
       const move = moves[index]!;
       try {
-        await preflight(move, request);
+        results[index] = await preflight(move, request);
       } catch (error) {
-        rejected[index] = failedEntry(move, error);
+        results[index] = failedEntry(move, error);
       }
     }
   };
   await Promise.all(Array.from({ length: Math.min(PREFLIGHT_CONCURRENCY, moves.length) }, worker));
-  return rejected;
+  return results;
 }
 
-async function preflight(move: Move, request: RequestOptions): Promise<void> {
+/**
+ * Verifies one move and returns it pinned to the preflight content hash, so a move that gets a new
+ * revision can still be confirmed by unchanged content.
+ */
+async function preflight(move: Move, request: RequestOptions): Promise<Move> {
   let photo: MachineMetadata;
   try {
     photo = await machineMetadata(move.fileID, request);
@@ -211,6 +222,7 @@ async function preflight(move: Move, request: RequestOptions): Promise<void> {
   if (await pathExists(move.destinationPath, request)) {
     throw new MachineError("destination_conflict", "Destination already exists.");
   }
+  return isContentHash(photo.content_hash) ? { ...move, contentHash: photo.content_hash } : move;
 }
 
 async function submitBatch(moves: Move[], request: RequestOptions): Promise<{ entries: Entry[]; async_job_id?: string }> {

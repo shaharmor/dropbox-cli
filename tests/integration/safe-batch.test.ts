@@ -121,3 +121,12 @@ test('batch preflight is bounded concurrent work at 100ms simulated Dropbox late
   console.log(`SAFE_BATCH_BASELINE photos=10 requests=23 helperProcesses=1 latencyMs=100 elapsedSeconds=${seconds.toFixed(3)}`);
   expect(seconds).toBeLessThan(5);
 });
+
+test('moves without a recorded contentHash are confirmed against the preflight hash despite a new revision', async () => {
+  const unhashed = entries.slice(0,2).map(({contentHash, ...move}) => move);
+  const out = await cli(unhashed);
+  expect(out.exit).toBe(0);
+  expect(data(out).entries.map(e=>[e.outcome,e.metadata?.rev])).toEqual([['confirmed','r2'],['confirmed','r2']]);
+  const changed = await cli(unhashed, `globalThis.fetch=async(url,init)=>String(url).endsWith('/move_batch_v2')?Response.json({'.tag':'complete',entries:entries.slice(0,2).map(e=>({'.tag':'success',success:{...moved(e),content_hash:'b'.repeat(64)}}))}):respond(url,init);`);
+  expect(data(changed).entries.map(e=>e.outcome)).toEqual(['unknown','unknown']);
+});
