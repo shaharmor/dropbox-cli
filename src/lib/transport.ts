@@ -22,7 +22,7 @@ export const READ_ENDPOINTS = new Set([
 const MAX_READ_RETRIES = 5;
 const MAX_TIMER_MS = 2147483647;
 const MACHINE_JSON_LIMIT = 2 * 1024 * 1024;
-const AUTH_REFUSED = "Dropbox authentication was refused. Reconnect the account.";
+export const AUTH_REFUSED = "Dropbox authentication was refused. Reconnect the account.";
 const UNKNOWN_OUTCOME = "Submission may have been applied. Reconcile without replaying.";
 
 // Per-response context needed later to redact errors and interpret Retry-After.

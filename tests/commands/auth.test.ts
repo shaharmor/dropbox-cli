@@ -56,8 +56,8 @@ describe("auth commands", () => {
       });
     });
 
-    test("outputs error on failed login", async () => {
-      mockLogin.mockRejectedValueOnce(new Error("Connection refused"));
+    test.each([new Error("Connection refused"), "something went wrong"])("outputs a generic error when login rejects with %p", async (failure) => {
+      mockLogin.mockRejectedValueOnce(failure);
 
       const program = new Command();
       registerAuthCommands(program);
@@ -77,17 +77,6 @@ describe("auth commands", () => {
       await expect(program.parseAsync(["bun", "test", "auth", "login", "--non-interactive", "--timeout", "10"])).rejects.toThrow("EXIT:auth_cancelled");
       expect(mockLogin).toHaveBeenCalledWith(expect.objectContaining({ interactive: false, timeoutMs: 10000, signal: expect.any(AbortSignal) }));
       expect(captured.error).toEqual({ code: "auth_cancelled", message: "Authentication cancelled." });
-    });
-
-    test("uses generic message for non-Error rejections", async () => {
-      mockLogin.mockRejectedValueOnce("something went wrong");
-
-      const program = new Command();
-      registerAuthCommands(program);
-      await expect(
-        program.parseAsync(["node", "test", "auth", "login"])
-      ).rejects.toThrow("EXIT:auth_failed");
-      expect(captured.error?.message).toBe("Authentication failed");
     });
   });
 

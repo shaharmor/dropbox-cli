@@ -3,12 +3,11 @@ import { contentDownload } from "../lib/api";
 import { isContentHash, isId, machineDownload } from "../lib/machine-api";
 import { printSuccess, formatBytes, runMachine } from "../lib/output";
 import { waitForRequest } from "../lib/streams";
-import { MachineError, type MachineOptions } from "../types";
-import { constants } from "fs";
+import { CredentialError, MachineError, type MachineOptions } from "../types";
+import { constants, existsSync, mkdirSync, writeFileSync } from "fs";
 import { open, lstat, link, unlink, type FileHandle } from "fs/promises";
 import { createHash, randomUUID } from "crypto";
 import { logHuman } from "../lib/logger";
-import { writeFileSync, existsSync, mkdirSync } from "fs";
 import { basename, join, dirname, resolve, isAbsolute, parse } from "path";
 
 interface OutputOptions extends MachineOptions {
@@ -54,8 +53,9 @@ class ContentHasher {
 function progressReporter(enabled: boolean, totalBytes: number) {
   let lastReport = -Infinity;
   return (downloadedBytes: number, force = false): void => {
+    if (!enabled) return;
     const now = performance.now();
-    if (!enabled || (!force && now - lastReport < PROGRESS_INTERVAL_MS)) return;
+    if (!force && now - lastReport < PROGRESS_INTERVAL_MS) return;
     process.stderr.write(JSON.stringify({
       type: "download_progress", downloaded_bytes: downloadedBytes, total_bytes: totalBytes,
     }) + "\n");
@@ -167,7 +167,7 @@ async function downloadOriginal(sources: string[], options: OutputOptions): Prom
       return { id: meta.id, rev: meta.rev, content_hash: meta.content_hash, size: total, local_path: output };
     } catch (error) {
       if (error instanceof MachineError) throw error;
-      if ((error as Error)?.name === "CredentialError") throw error;
+      if (error instanceof CredentialError) throw error;
       throw new MachineError(
         request.signal?.aborted ? "cancelled" : "download_error",
         "Original download was not completed; no partial file is published.",

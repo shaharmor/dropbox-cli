@@ -46,10 +46,12 @@ export function printMachineError(error: unknown): void {
   const failure = error instanceof MachineError ? error : error instanceof CredentialError
     ? new MachineError(error.code, error.message)
     : new MachineError("machine_error", "The operation could not be completed.");
-  console.log(JSON.stringify({ ok: false, error: {
-    code: failure.code, message: failure.message, details: failure.details,
-  } }));
-  process.exitCode = failure instanceof MachineError && failure.code === "auth_error" ? 2 : 1;
+  const envelope: ErrorEnvelope = {
+    ok: false,
+    error: { code: failure.code, message: failure.message, details: failure.details },
+  };
+  console.log(JSON.stringify(envelope));
+  process.exitCode = failure.code === "auth_error" ? 2 : 1;
 }
 
 export async function runMachine(options: MachineOptions, operation: (request: RequestOptions) => Promise<unknown>): Promise<void> {
@@ -73,10 +75,6 @@ export async function runMachine(options: MachineOptions, operation: (request: R
     process.removeListener("SIGINT", cancel);
     process.removeListener("SIGTERM", cancel);
   }
-}
-
-export function printAuthError(message: string): never {
-  printError("auth_error", message, 2);
 }
 
 export function formatBytes(bytes: number): string {

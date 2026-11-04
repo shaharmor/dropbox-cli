@@ -114,6 +114,7 @@ test("malformed legacy records fail without secrets", async () => {
   expect(await f.run(`${seedLegacy}
     writeFileSync(authPath,'{"access_token":"DO-NOT-LEAK"');
     assert.throws(()=>config.readAuth(),e=>e.code==='credential_store_error'&&!e.message.includes('DO-NOT-LEAK'));
+    assert.throws(()=>auth.logout(),e=>e.code==='credential_store_error');
     writeFileSync(authPath,JSON.stringify({...legacy,expires_at:'bad'}));
     assert.throws(()=>config.readAuth(),e=>e.code==='credential_store_error');
   `)).toMatchObject({ exit: 0 });

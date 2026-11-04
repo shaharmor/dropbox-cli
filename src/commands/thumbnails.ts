@@ -46,9 +46,9 @@ function verifiedThumbnail(photo: ThumbnailRequest, item: ThumbnailResult): stri
   if (!matches || typeof thumbnail !== "string" || !thumbnail || thumbnail.length > MAX_THUMBNAIL_BASE64_LENGTH) {
     return undefined;
   }
-  // Round-tripping rejects anything that is not canonical base64.
   const bytes = Buffer.from(thumbnail, "base64");
-  return bytes.length <= MAX_THUMBNAIL_BYTES && bytes.toString("base64") === thumbnail ? thumbnail : undefined;
+  const isCanonicalBase64 = bytes.toString("base64") === thumbnail;
+  return bytes.length <= MAX_THUMBNAIL_BYTES && isCanonicalBase64 ? thumbnail : undefined;
 }
 
 export function registerThumbnailsCommand(program: Command): void {

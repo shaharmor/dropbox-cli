@@ -96,7 +96,7 @@ export function coordinate<T>(operation: (dir: string) => T): T {
       if (performance.now() >= deadline) timeout();
       db ??= openCoordination();
       if (db && begin(db)) break;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+      Bun.sleepSync(10);
     }
     // SQLite is only the OS-backed mutex. Generations live in atomically replaced JSON,
     // not in this transaction, so a crash/rollback cannot undo a published fence.

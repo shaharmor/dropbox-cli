@@ -2,7 +2,7 @@ import { createServer } from "http";
 import { createHash, randomBytes, timingSafeEqual } from "crypto";
 import { createInterface } from "readline/promises";
 import {
-  beginAuthAttempt, cancelAuthAttempt, clearAuth, readConfig, withCredentialStore, writeAuth, writeConfig,
+  beginAuthAttempt, cancelAuthAttempt, clearAuth, readConfig, text, withCredentialStore, writeAuth, writeConfig,
 } from "./config";
 import { authDeadline } from "./auth-coordination";
 import { CredentialError, type AppConfig } from "../types";
@@ -65,12 +65,7 @@ function callbackError(params: URLSearchParams, state: string): CredentialError 
 
 /** One-shot loopback server that resolves `code` with the first valid OAuth callback. */
 function callbackServer(state: string, port: number) {
-  let resolveCode!: (code: string) => void;
-  let rejectCode!: (error: Error) => void;
-  const code = new Promise<string>((resolve, reject) => {
-    resolveCode = resolve;
-    rejectCode = reject;
-  });
+  const { promise: code, resolve: resolveCode, reject: rejectCode } = Promise.withResolvers<string>();
   // A callback may finish while the browser launcher is still returning.
   void code.catch(() => {});
   let settled = false;
@@ -166,7 +161,7 @@ async function exchangeCode(
   if (!response.ok) throw new CredentialError("auth_exchange_failed", "Authorization token exchange failed.");
   const token = await deadline.wait(response.json()) as Record<string, unknown>;
   const valid = !!token &&
-    [token.access_token, token.refresh_token, token.account_id].every(value => typeof value === "string" && value.length > 0) &&
+    [token.access_token, token.refresh_token, token.account_id].every(text) &&
     typeof token.expires_in === "number" && Number.isFinite(token.expires_in) && token.expires_in > 0;
   if (!valid) throw new CredentialError("auth_exchange_failed", "Invalid authorization token response.");
   return token as TokenResponse;

@@ -61,13 +61,12 @@ function ensureFolder(path: string, options: MkdirOptions): Promise<void> {
     let result: { metadata: unknown };
     try {
       result = await machineRpc("files/create_folder_v2", { path, autorename: false }, request);
-    } catch (error) {
-      if (!isFolderConflictRefusal(error)) throw error;
-      // A failed verification read cannot replace the authoritative creation refusal.
+    } catch (refusal) {
+      if (!isFolderConflictRefusal(refusal)) throw refusal;
       try {
         return await existingFolder(path, request);
       } catch {
-        throw error;
+        throw refusal;
       }
     }
     return createdFolder(result?.metadata, path);

@@ -30,7 +30,7 @@ export async function readBounded(
   try {
     while (true) {
       const { done, value } = await waitForRequest(reader.read(), signal);
-      if (done) return Buffer.concat(chunks);
+      if (done) return Buffer.concat(chunks, size);
       size += value.length;
       if (size > limit) throw new Error("Stream exceeded its size bound.");
       chunks.push(value);

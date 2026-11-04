@@ -111,7 +111,7 @@ Examples:
     .action(async (sources: string[], options: SafeMoveOptions) => {
       // Any machine flag routes to the checked path, so an incomplete safe invocation
       // fails with invalid_args instead of silently running an unchecked move.
-      const machineMode = options.safe || Object.keys(options).some(key => key !== "autorename");
+      const machineMode = Object.keys(options).some(key => key !== "autorename");
       if (machineMode) return safeMove(sources, options);
       if (sources.length < 2) {
         printError("invalid_args", "Usage: dropbox-cli mv <source...> <destination>");

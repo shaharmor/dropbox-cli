@@ -1,11 +1,11 @@
 import { log } from "./logger";
 import { printError } from "./output";
-import { CONTENT_BASE, RPC_BASE, fetchWithRetry, parseDropboxError, readError } from "./transport";
+import { AUTH_REFUSED, CONTENT_BASE, RPC_BASE, fetchWithRetry, parseDropboxError, readError } from "./transport";
 import type { RequestOptions } from "../types";
 
 async function failResponse(response: Response): Promise<never> {
   if (response.status === 401) {
-    printError("auth_error", "Dropbox authentication was refused. Reconnect the account.", 2);
+    printError("auth_error", AUTH_REFUSED, 2);
   }
   const { code, message } = parseDropboxError(await readError(response));
   printError(code, message);

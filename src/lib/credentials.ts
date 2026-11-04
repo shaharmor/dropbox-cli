@@ -1,4 +1,4 @@
-import { withCredentialStoreAsync, type CredentialStore } from "./config";
+import { text, withCredentialStoreAsync, type CredentialStore } from "./config";
 import { authDeadline, MAX_REFRESH_MS } from "./auth-coordination";
 import { log } from "./logger";
 import { CredentialError, type AuthRequestOptions, type CredentialSnapshot } from "../types";
@@ -91,7 +91,7 @@ function isValidRefresh(
   accountId: string,
 ): data is { access_token: string; expires_in: number; account_id?: unknown } {
   return !!data &&
-    typeof data.access_token === "string" && data.access_token.length > 0 &&
+    text(data.access_token) &&
     typeof data.expires_in === "number" && Number.isFinite(data.expires_in) && data.expires_in > 0 &&
     (data.account_id === undefined || data.account_id === accountId);
 }

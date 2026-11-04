@@ -67,7 +67,7 @@ function atomicJSON(dir: string, name: string, value: unknown): void {
   }
 }
 
-function text(value: unknown): value is string {
+export function text(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
@@ -115,7 +115,6 @@ function openStore(dir: string) {
     return generation;
   };
 
-  // Always reads the record so a corrupt or unsafe auth.json fails closed before any write.
   const requireGeneration = (expected?: string): void => {
     const { generation } = readRecord();
     if (expected !== undefined && expected !== generation) {

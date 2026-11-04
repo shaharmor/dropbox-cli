@@ -128,11 +128,12 @@ export async function machineDownload(
   options: RequestOptions,
 ): Promise<{ metadata: Record<string, unknown>; body: ReadableStream<Uint8Array> }> {
   requireAccount(options);
+  const request: RequestOptions = { ...options, machine: true, retry: "read" };
   const response = await fetchWithRetry(`${CONTENT_BASE}/files/download`, {
     method: "POST",
     headers: { "Dropbox-API-Arg": JSON.stringify({ path }) },
-  }, { ...options, machine: true, retry: "read" });
-  if (!response.ok) await machineResponse(response, options, false);
+  }, request);
+  if (!response.ok) await machineResponse(response, request, false);
   try {
     const header = response.headers.get("Dropbox-API-Result");
     if (!header || header.length > 16384 || !response.body) throw new Error();

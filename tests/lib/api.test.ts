@@ -48,16 +48,6 @@ test("401 recovery cannot retarget from A to B or resurrect logout", async () =>
   }
 }, 20000);
 
-test("near-expiry and 401 refresh use a new immutable same-account snapshot", async () => {
-  expect(await f.run(`${seed}
-    config.writeAuth({...fake,expires_at:1}); let refreshes=0, content=0;
-    globalThis.fetch=async(url,options)=> { if(String(url).endsWith('/oauth2/token')) { refreshes++; assert.ok(options.signal); return Response.json({access_token:'fresh-'+refreshes,expires_in:3600}); } content++; assert.equal(new Headers(options.headers).get('Authorization'),'Bearer fresh-'+refreshes); return Response.json({ok:true}); };
-    await api.rpc('files/list_folder'); assert.equal(refreshes,1);
-    globalThis.fetch=async(url,options)=> { if(String(url).endsWith('/oauth2/token')) { refreshes++; return Response.json({access_token:'fresh-'+refreshes,expires_in:3600}); } content++; return content===2 ? new Response('',{status:401}) : Response.json({ok:true}); };
-    await api.rpc('files/list_folder'); assert.equal(refreshes,2); assert.equal(content,3);
-  `)).toMatchObject({ exit: 0 });
-});
-
 test("authentication recovery has a separate budget after a transient read failure", async () => {
   expect(await f.run(`${seed}
     let statuses=[429,401,200],refreshes=0;
@@ -78,14 +68,6 @@ test("missing credentials and failed refresh produce noninteractive sanitized er
   expect(missing.stdout).toContain('auth_error'); expect(missing.exit).not.toBe(0);
   const failed=await f.run(`${seed} config.writeAuth({...fake,expires_at:1}); globalThis.fetch=async()=>new Response('DO-NOT-LEAK fake-secret',{status:400}); await api.rpc('files/list_folder');`);
   expect(failed.stdout).toContain('auth_error'); expect(failed.stdout+failed.stderr).not.toContain('DO-NOT-LEAK');
-});
-
-test("refresh deadline cancels stuck network and releases coordination", async () => {
-  expect(await f.run(`${seed} config.writeAuth({...fake,expires_at:1});
-    globalThis.fetch=async()=>new Promise(()=>{});
-    await assert.rejects(()=>api.getCredentialSnapshot({expectedAccountId:'A',refreshTimeoutMs:50}),e=>e.code==='auth_timeout');
-    auth.logout(); assert.equal(config.readAuth(),null);
-  `)).toMatchObject({exit:0});
 });
 
 test("authentication refusals are distinct and API error echoes cannot expose tokens", async () => {

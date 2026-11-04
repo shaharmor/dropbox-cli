@@ -7,7 +7,7 @@ import { runMachine } from "../lib/output";
 import { readStdinJSON } from "../lib/streams";
 import {
   CredentialError, MachineError,
-  type MachineMetadata, type MachineOptions, type MutationOutcome, type RequestOptions,
+  type MachineErrorDetails, type MachineMetadata, type MachineOptions, type MutationOutcome, type RequestOptions,
 } from "../types";
 
 /** One reviewed photo move, as recorded by the viewer and supplied on stdin. */
@@ -26,10 +26,10 @@ type Entry = {
   fileID: string;
   outcome: "confirmed" | "pending" | MutationOutcome;
   metadata?: MachineMetadata;
-  error?: { code: string; message: string; details: MachineError["details"] };
+  error?: { code: string; message: string; details: MachineErrorDetails };
 };
 
-type BatchResult = { entries: (Entry | undefined)[]; async_job_id?: string };
+type BatchReport = { entries: (Entry | undefined)[]; async_job_id?: string };
 
 type BatchEntryResult = {
   ".tag"?: string;
@@ -141,7 +141,7 @@ function completedEntry(move: Move, item: BatchEntryResult): Entry {
 // ---------------------------------------------------------------------------
 
 /** Checks every move, then submits the ones that passed as a single batch. */
-async function submit(moves: Move[], request: RequestOptions): Promise<BatchResult> {
+async function submit(moves: Move[], request: RequestOptions): Promise<BatchReport> {
   await verifyParentFolders(moves, request);
   const rejected = await preflightAll(moves, request);
   const admitted = moves.filter((_, index) => !rejected[index]);
@@ -149,8 +149,7 @@ async function submit(moves: Move[], request: RequestOptions): Promise<BatchResu
 
   const submitted = await submitBatch(admitted, request);
   let next = 0;
-  const entries = rejected.map(entry => entry ?? submitted.entries[next++]);
-  return { entries, ...(submitted.asyncJobId ? { async_job_id: submitted.asyncJobId } : {}) };
+  return { ...submitted, entries: rejected.map(entry => entry ?? submitted.entries[next++]) };
 }
 
 // All folder checks are shared, bounded by the batch, and finish before any move.
@@ -214,7 +213,7 @@ async function preflight(move: Move, request: RequestOptions): Promise<void> {
   }
 }
 
-async function submitBatch(moves: Move[], request: RequestOptions): Promise<{ entries: Entry[]; asyncJobId?: string }> {
+async function submitBatch(moves: Move[], request: RequestOptions): Promise<{ entries: Entry[]; async_job_id?: string }> {
   try {
     const response = await machineRpc<{ ".tag"?: string; async_job_id?: string }>("files/move_batch_v2", {
       entries: moves.map(move => ({ from_path: move.fileID, to_path: move.destinationPath })),
@@ -222,7 +221,7 @@ async function submitBatch(moves: Move[], request: RequestOptions): Promise<{ en
       allow_ownership_transfer: false,
     }, request);
     if (response?.[".tag"] === "async_job_id" && isJobId(response.async_job_id)) {
-      return { entries: moves.map(pendingEntry), asyncJobId: response.async_job_id };
+      return { entries: moves.map(pendingEntry), async_job_id: response.async_job_id };
     }
     return { entries: completedEntries(response, moves) };
   } catch (error) {
@@ -231,7 +230,7 @@ async function submitBatch(moves: Move[], request: RequestOptions): Promise<{ en
 }
 
 /** Read-only status check of an accepted batch. Never resubmits. */
-async function poll(jobId: string, moves: Move[], request: RequestOptions): Promise<BatchResult> {
+async function poll(jobId: string, moves: Move[], request: RequestOptions): Promise<BatchReport> {
   if (!isJobId(jobId)) throw new MachineError("invalid_args", "Invalid batch job identity.");
   try {
     const response = await machineRpc<{ ".tag"?: string }>("files/move_batch/check_v2", { async_job_id: jobId }, request);
