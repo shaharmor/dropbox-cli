@@ -78,19 +78,20 @@ test('async receipt can be polled without repeating preflight or submitting agai
 test('partial provider failures distinguish refusal from uncertain internal errors', async () => {
   const out=await cli(entries.slice(0,3), `globalThis.fetch=async(url,init)=>String(url).endsWith('/move_batch_v2')?Response.json({'.tag':'complete',entries:[{'.tag':'success',success:moved(entries[0])},{'.tag':'failure',failure:{'.tag':'relocation_error',relocation_error:{'.tag':'to',to:{'.tag':'conflict'}}}},{'.tag':'failure',failure:{'.tag':'internal_error'}}]}):respond(url,init);`);
   expect(data(out).entries.map(e=>e.outcome)).toEqual(['confirmed','refused','unknown']);
+  expect(data(out).entries[2].error.code).toBe('unknown_outcome');
 });
 
 test('malformed results and lost acknowledgments stay unknown and never replay', async () => {
   for(const fault of ["throw new Error('lost');", "return Response.json({'.tag':'complete',entries:[]});", "return Response.json({'.tag':'complete',entries:[{'.tag':'success',success:{...moved(entries[0]),id:'id:wrong'}}]});"]) {
     const out=await cli(entries.slice(0,1), `globalThis.fetch=async(url,init)=>{if(String(url).endsWith('/move_batch_v2')){appendFileSync(join(root,'mutations'),'once\\n');${fault}}return respond(url,init);};`);
-    expect(data(out).entries[0].outcome).toBe('unknown');
+    expect(data(out).entries[0]).toMatchObject({outcome:'unknown',error:{code:'unknown_outcome',details:{outcome:'unknown'}}});
   }
   expect(readFileSync(join(f.root,'mutations'),'utf8').trim().split('\n')).toHaveLength(3);
 });
 
 test('poll failures never claim that the original move was not submitted', async () => {
   const out=await cli(entries.slice(0,1), `globalThis.fetch=async()=>Response.json({error:{'.tag':'invalid_async_job_id'}},{status:409});`, ['--job-id','expired']);
-  expect(data(out).entries[0].outcome).toBe('unknown');
+  expect(data(out).entries[0]).toMatchObject({outcome:'unknown',error:{code:'unknown_outcome',details:{http_status:409}}});
   expect(data(out).async_job_id).toBeUndefined();
 });
 

@@ -92,10 +92,12 @@ function failedEntry(move: Move, error: unknown, forceUnknown = false): Entry {
     : error instanceof CredentialError ? new MachineError(error.code, "Dropbox connection needs attention.")
     : new MachineError("invalid_response", "Batch could not be verified.");
   const outcome = forceUnknown ? "unknown" : failure.details.outcome;
+  // Uncertain moves always carry the documented code, so callers never mistake one for a harmless error.
+  const code = outcome === "unknown" ? "unknown_outcome" : failure.code;
   return {
     fileID: move.fileID,
     outcome,
-    error: { code: failure.code, message: "Move could not be confirmed.", details: { ...failure.details, outcome } },
+    error: { code, message: "Move could not be confirmed.", details: { ...failure.details, outcome } },
   };
 }
 
