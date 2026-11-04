@@ -14,6 +14,7 @@ import { registerMvCommand } from "./commands/mv";
 import { registerSafeBatchCommand } from "./commands/mv-batch";
 import { registerSearchCommand } from "./commands/search";
 import { registerShareCommand } from "./commands/share";
+import { registerStreamLinkCommand } from "./commands/stream-link";
 import { registerThumbnailsCommand } from "./commands/thumbnails";
 import { registerUploadCommand } from "./commands/upload";
 
@@ -43,6 +44,7 @@ program.command("capabilities")
     capabilities: [
       "account-status", "login-pkce", "list-page", "metadata", "download-original",
       "download-progress", "ensure-directory", "move-single", "move-batch", "thumbnail-batch",
+      "stream-link",
     ],
   }));
 
@@ -58,6 +60,7 @@ registerMvCommand(program);
 registerSafeBatchCommand(program);
 registerSearchCommand(program);
 registerShareCommand(program);
+registerStreamLinkCommand(program);
 registerThumbnailsCommand(program);
 registerUploadCommand(program);
 
