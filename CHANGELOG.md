@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- `bulk-mv` now reports why each file failed to move: human output shows the reason per file, and JSON output includes a `failures` list of `{ path, reason }`
+
 ## [1.0.0] - 2026-04-16
 
 ### Added
