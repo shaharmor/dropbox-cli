@@ -49,7 +49,13 @@ function verifiedThumbnail(photo: ThumbnailRequest, item: ThumbnailResult): stri
   }
   const bytes = Buffer.from(thumbnail, "base64");
   const isCanonicalBase64 = bytes.toString("base64") === thumbnail;
-  return bytes.length <= MAX_THUMBNAIL_BYTES && isCanonicalBase64 ? thumbnail : undefined;
+  return bytes.length <= MAX_THUMBNAIL_BYTES && isCanonicalBase64 && isJpeg(bytes) ? thumbnail : undefined;
+}
+
+/** JPEG start-of-image (FF D8 FF) and end-of-image (FF D9) markers. */
+function isJpeg(bytes: Buffer): boolean {
+  return bytes.length >= 5 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff &&
+    bytes[bytes.length - 2] === 0xff && bytes[bytes.length - 1] === 0xd9;
 }
 
 export function registerThumbnailsCommand(program: Command): void {

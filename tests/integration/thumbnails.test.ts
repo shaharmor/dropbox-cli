@@ -15,7 +15,7 @@ const setup = `config.writeConfig(app); config.writeAuth(fake);
     const body=JSON.parse(init.body);
     assert.equal(body.entries.length,25);
     for(const e of body.entries) { assert.equal(e.size,'w256h256'); assert.equal(e.format,'jpeg'); assert.equal(e.mode,'strict'); assert.ok(e.path.startsWith('rev:')); }
-    return Response.json({entries:body.entries.map((e,i)=>({'.tag':'success',metadata:{'.tag':'file',id:'id:'+i,rev:e.path.slice(4),content_hash:'a'.repeat(64)},thumbnail:'aGVsbG8='}))});
+    return Response.json({entries:body.entries.map((e,i)=>({'.tag':'success',metadata:{'.tag':'file',id:'id:'+i,rev:e.path.slice(4),content_hash:'a'.repeat(64)},thumbnail:'/9j/4AAQ/9k='}))});
   };`;
 async function run(input: unknown = photos, script = setup, flags: string[] = []) {
   const out = await f.run(`${script}\nprocess.argv=['bun','dropbox-cli','thumbnails','--expected-account','A',...${JSON.stringify(flags)}];await import(${JSON.stringify(entry)});`, JSON.stringify(input));
@@ -26,7 +26,7 @@ test("25 revision-pinned thumbnails use one content-host RPC and no originals", 
   const out = await run();
   expect(out.exit).toBe(0);
   expect(out.result.data.entries).toHaveLength(25);
-  expect(out.result.data.entries[0]).toEqual({ fileID: 'id:0', revision: photos[0]!.revision, thumbnail: 'aGVsbG8=' });
+  expect(out.result.data.entries[0]).toEqual({ fileID: 'id:0', revision: photos[0]!.revision, thumbnail: '/9j/4AAQ/9k=' });
 });
 
 test("thumbnail batches reject invalid bounds and identities before dispatch", async () => {
@@ -37,10 +37,10 @@ test("thumbnail batches reject invalid bounds and identities before dispatch", a
 });
 
 test("unsupported photos are per-entry failures; mismatched identity never returns pixels", async () => {
-  for (const change of ["entries[1]={'.tag':'failure',failure:{'.tag':'unsupported_image'}};", "entries[1].metadata.id='id:wrong';", "entries[1].metadata.rev='other';", "entries[1].metadata.content_hash='b'.repeat(64);", "entries[1].thumbnail='!bad';", "entries[1].thumbnail=Buffer.alloc(65537).toString('base64');"]) {
+  for (const change of ["entries[1]={'.tag':'failure',failure:{'.tag':'unsupported_image'}};", "entries[1].metadata.id='id:wrong';", "entries[1].metadata.rev='other';", "entries[1].metadata.content_hash='b'.repeat(64);", "entries[1].thumbnail='!bad';", "entries[1].thumbnail=Buffer.alloc(65537).toString('base64');", "entries[1].thumbnail='aGVsbG8=';", "entries[1].thumbnail=Buffer.from([0xff,0xd8,0xff,0xe0]).toString('base64');"]) {
     const script = setup + `const originalFetch=globalThis.fetch;globalThis.fetch=async(url,init)=>{const {entries}=await (await originalFetch(url,init)).json();${change}return Response.json({entries});};`;
     const out = await run(photos, script);
-    expect(out.exit).toBe(0); expect(out.result.data.entries[0].thumbnail).toBe('aGVsbG8=');
+    expect(out.exit).toBe(0); expect(out.result.data.entries[0].thumbnail).toBe('/9j/4AAQ/9k=');
     expect(out.result.data.entries[1]).toEqual({fileID:'id:1',revision:photos[1]!.revision,error:'unavailable'});
   }
 });
