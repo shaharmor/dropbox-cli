@@ -7,12 +7,30 @@ import { basename } from "path";
 
 const DEFAULT_batchSize = 500;
 
+interface MoveFailure {
+  path: string;
+  reason: string;
+}
+
+// Dropbox errors are nested tagged unions, e.g. relocation_error -> to -> conflict -> file.
+// Join the tag chain into one readable reason like "relocation_error/to/conflict/file".
+function describeFailure(failure: unknown): string {
+  const tags: string[] = [];
+  let node = failure as Record<string, unknown> | undefined;
+  while (node && typeof node[".tag"] === "string") {
+    const tag = node[".tag"];
+    tags.push(tag);
+    node = node[tag] as Record<string, unknown> | undefined;
+  }
+  return tags.length > 0 ? tags.join("/") : "unknown";
+}
+
 async function moveBatch(
   paths: string[],
   dest: string,
   autorename: boolean,
   label: string
-): Promise<number> {
+): Promise<{ moved: number; failures: MoveFailure[] }> {
   log(`[${label}] Moving ${paths.length} files...`);
 
   const entries = paths.map((src) => ({
@@ -36,7 +54,7 @@ async function moveBatch(
   }
 
   let moved = 0;
-  const failed: string[] = [];
+  const failures: MoveFailure[] = [];
   if (completed.entries) {
     for (let i = 0; i < completed.entries.length; i++) {
       const entry = completed.entries[i];
@@ -44,17 +62,18 @@ async function moveBatch(
         moved++;
         logHuman(`  ✓ ${paths[i]}`);
       } else {
-        failed.push(paths[i]);
-        logHuman(`  ✗ ${paths[i]} (${entry[".tag"]})`);
+        const reason = describeFailure(entry.failure);
+        failures.push({ path: paths[i], reason });
+        logHuman(`  ✗ ${paths[i]} — ${reason}`);
       }
     }
   }
 
   log(`[${label}] Done. ${moved}/${paths.length} moved.`);
-  if (failed.length > 0) {
-    logError(`[${label}] ${failed.length} file(s) failed to move.`);
+  if (failures.length > 0) {
+    logError(`[${label}] ${failures.length} file(s) failed to move.`);
   }
-  return moved;
+  return { moved, failures };
 }
 
 export function registerBulkMvCommand(program: Command): void {
@@ -99,6 +118,7 @@ Examples:
       const inFlight = new Set<Promise<void>>();
       let totalFound = 0;
       let totalMoved = 0;
+      const allFailures: MoveFailure[] = [];
       let totalListed = 0;
       let batchNum = 0;
 
@@ -108,8 +128,9 @@ Examples:
         batchNum++;
         const label = `batch ${batchNum}`;
         logHuman(`${label}: moving ${batch.length} files...`);
-        const moved = await moveBatch(batch, dest, autorename, label);
+        const { moved, failures } = await moveBatch(batch, dest, autorename, label);
         totalMoved += moved;
+        allFailures.push(...failures);
       }
 
       async function flushReady(): Promise<void> {
@@ -182,6 +203,7 @@ Examples:
         matched: totalFound,
         moved: dryRun ? 0 : totalMoved,
         failed: dryRun ? 0 : totalFound - totalMoved,
+        failures: allFailures,
         dry_run: dryRun,
         source,
         dest,

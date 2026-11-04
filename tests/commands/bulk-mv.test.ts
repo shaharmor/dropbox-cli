@@ -91,6 +91,8 @@ describe("bulk-mv command", () => {
       expect.objectContaining({
         matched: 2,
         moved: 2,
+        failed: 0,
+        failures: [],
         dry_run: false,
         source: "/Source",
         dest: "/Dest",
@@ -136,6 +138,7 @@ describe("bulk-mv command", () => {
       expect.objectContaining({
         matched: 1,
         moved: 0,
+        failures: [],
         dry_run: true,
       })
     );
@@ -366,7 +369,7 @@ describe("bulk-mv command", () => {
     );
   });
 
-  test("reports correct count when some files fail to move", async () => {
+  test("reports count and reason when some files fail to move", async () => {
     mockRpcRaw.mockResolvedValueOnce({ ok: true, status: 200, data: {} });
 
     mockRpc.mockResolvedValueOnce({
@@ -382,7 +385,16 @@ describe("bulk-mv command", () => {
       ".tag": "complete",
       entries: [
         { ".tag": "success" },
-        { ".tag": "failure", failure: { ".tag": "to/conflict" } },
+        {
+          ".tag": "failure",
+          failure: {
+            ".tag": "relocation_error",
+            relocation_error: {
+              ".tag": "to",
+              to: { ".tag": "conflict", conflict: { ".tag": "file" } },
+            },
+          },
+        },
         { ".tag": "success" },
       ],
     });
@@ -400,7 +412,93 @@ describe("bulk-mv command", () => {
     ]);
 
     expect(captured.success).toEqual(
-      expect.objectContaining({ matched: 3, moved: 2, failed: 1 })
+      expect.objectContaining({
+        matched: 3,
+        moved: 2,
+        failed: 1,
+        failures: [{ path: "/S/b.txt", reason: "relocation_error/to/conflict/file" }],
+      })
+    );
+  });
+
+  test("reports single-tag failure reasons and unknown when none is given", async () => {
+    mockRpcRaw.mockResolvedValueOnce({ ok: true, status: 200, data: {} });
+
+    mockRpc.mockResolvedValueOnce({
+      entries: [
+        { ".tag": "file", name: "a.txt", path_display: "/S/a.txt" },
+        { ".tag": "file", name: "b.txt", path_display: "/S/b.txt" },
+      ],
+      cursor: "c",
+      has_more: false,
+    });
+    mockRpc.mockResolvedValueOnce({
+      ".tag": "complete",
+      entries: [
+        { ".tag": "failure", failure: { ".tag": "too_many_write_operations" } },
+        { ".tag": "failure" },
+      ],
+    });
+
+    const program = new Command();
+    registerBulkMvCommand(program);
+    await program.parseAsync(["node", "test", "bulk-mv", "/S", "/D", "--match", ""]);
+
+    expect(captured.success).toEqual(
+      expect.objectContaining({
+        moved: 0,
+        failed: 2,
+        failures: [
+          { path: "/S/a.txt", reason: "too_many_write_operations" },
+          { path: "/S/b.txt", reason: "unknown" },
+        ],
+      })
+    );
+  });
+
+  test("collects failures from every batch", async () => {
+    mockRpcRaw.mockResolvedValueOnce({ ok: true, status: 200, data: {} });
+
+    mockRpc.mockResolvedValueOnce({
+      entries: [
+        { ".tag": "file", name: "a.txt", path_display: "/S/a.txt" },
+        { ".tag": "file", name: "b.txt", path_display: "/S/b.txt" },
+      ],
+      cursor: "c",
+      has_more: false,
+    });
+    mockRpc
+      .mockResolvedValueOnce({
+        ".tag": "complete",
+        entries: [{ ".tag": "failure", failure: { ".tag": "internal_error" } }],
+      })
+      .mockResolvedValueOnce({
+        ".tag": "complete",
+        entries: [{ ".tag": "failure", failure: { ".tag": "too_many_write_operations" } }],
+      });
+
+    const program = new Command();
+    registerBulkMvCommand(program);
+    await program.parseAsync([
+      "node",
+      "test",
+      "bulk-mv",
+      "/S",
+      "/D",
+      "--match",
+      "",
+      "--batch-size",
+      "1",
+    ]);
+
+    expect(captured.success).toEqual(
+      expect.objectContaining({
+        failed: 2,
+        failures: [
+          { path: "/S/a.txt", reason: "internal_error" },
+          { path: "/S/b.txt", reason: "too_many_write_operations" },
+        ],
+      })
     );
   });
 });
