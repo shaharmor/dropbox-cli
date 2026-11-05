@@ -2,6 +2,7 @@
 import { Command, CommanderError } from "commander";
 import { setVerbose } from "./lib/logger";
 import { setHumanMode, printSuccess, printError, printMachineError } from "./lib/output";
+import { finishUpdateCheck, startUpdateCheck } from "./lib/update";
 import { CredentialError, MachineError } from "./types";
 import pkg from "../package.json";
 import { registerAuthCommands } from "./commands/auth";
@@ -33,11 +34,13 @@ program
   .option("--verbose", "Debug logging to stderr");
 
 // Apply global options before any command runs
-program.hook("preAction", (thisCommand) => {
+program.hook("preAction", (thisCommand, actionCommand) => {
   const opts = thisCommand.optsWithGlobals();
   setVerbose(opts.verbose ?? false);
   setHumanMode(opts.human ?? false);
+  startUpdateCheck(actionCommand.name());
 });
+program.hook("postAction", () => finishUpdateCheck());
 
 program.command("capabilities")
   .description("Describe the versioned viewer machine contract without authentication")

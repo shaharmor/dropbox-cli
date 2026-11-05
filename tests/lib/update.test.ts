@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "crypto";
-import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { assetName, isNewer, latestRelease, replaceBinary } from "../../src/lib/update";
+import {
+  CURRENT_VERSION, assetName, finishUpdateCheck, isNewer, latestRelease, replaceBinary, startUpdateCheck,
+} from "../../src/lib/update";
 
 const realFetch = globalThis.fetch;
 let dir: string;
@@ -129,5 +131,113 @@ describe("replaceBinary", () => {
     expect((await failure(replaceBinary(target(), "v1.2.0", asset))).code).toBe("permission_denied");
     expect(requests).toEqual([]);
     expect(readFileSync(target(), "utf8")).toBe("old binary");
+  });
+});
+
+describe("update notice", () => {
+  const api = "https://api.github.com/repos/shaharmor/dropbox-cli/releases/latest";
+  const realError = console.error;
+  const realTTY = process.stderr.isTTY;
+  const realConfigDir = process.env.DROPBOX_CLI_CONFIG_DIR;
+  let stderr: string[];
+  const stamp = () => join(dir, "config", "update-check.json");
+
+  beforeEach(() => {
+    process.env.DROPBOX_CLI_CONFIG_DIR = join(dir, "config");
+    process.stderr.isTTY = true;
+    stderr = [];
+    console.error = (...args: unknown[]) => { stderr.push(args.join(" ")); };
+  });
+
+  afterEach(() => {
+    console.error = realError;
+    process.stderr.isTTY = realTTY;
+    if (realConfigDir === undefined) delete process.env.DROPBOX_CLI_CONFIG_DIR;
+    else process.env.DROPBOX_CLI_CONFIG_DIR = realConfigDir;
+  });
+
+  test("prints one notice when a newer release exists and records the check", async () => {
+    serve({ [api]: Response.json({ tag_name: "v99.0.0" }) });
+    startUpdateCheck("ls");
+    await finishUpdateCheck();
+    expect(stderr).toHaveLength(1);
+    expect(stderr[0]).toContain(`${CURRENT_VERSION} → 99.0.0`);
+    expect(stderr[0]).toContain("dropbox-cli upgrade");
+    expect(JSON.parse(readFileSync(stamp(), "utf8")).checked_at).toBeNumber();
+  });
+
+  test("makes no request when stderr is not a terminal", async () => {
+    process.stderr.isTTY = false;
+    serve({ [api]: Response.json({ tag_name: "v99.0.0" }) });
+    startUpdateCheck("ls");
+    await finishUpdateCheck();
+    expect(requests).toEqual([]);
+    expect(stderr).toEqual([]);
+  });
+
+  test("makes no request when checked within the last day", async () => {
+    serve({ [api]: Response.json({ tag_name: "v99.0.0" }) });
+    startUpdateCheck("ls");
+    await finishUpdateCheck();
+    stderr = [];
+    startUpdateCheck("ls");
+    await finishUpdateCheck();
+    expect(requests).toHaveLength(1);
+    expect(stderr).toEqual([]);
+  });
+
+  test("checks again once the last check is over a day old", async () => {
+    serve({ [api]: Response.json({ tag_name: "v99.0.0" }) });
+    startUpdateCheck("ls");
+    await finishUpdateCheck();
+    writeFileSync(stamp(), JSON.stringify({ checked_at: Date.now() - 25 * 60 * 60 * 1000 }));
+    startUpdateCheck("ls");
+    await finishUpdateCheck();
+    expect(requests).toHaveLength(2);
+  });
+
+  test("stays silent offline and still records the attempt", async () => {
+    globalThis.fetch = (async () => { throw new TypeError("network down"); }) as unknown as typeof fetch;
+    startUpdateCheck("ls");
+    await finishUpdateCheck();
+    expect(stderr).toEqual([]);
+    expect(JSON.parse(readFileSync(stamp(), "utf8")).checked_at).toBeNumber();
+  });
+
+  test("abandons a slow check shortly after the command finishes", async () => {
+    let aborted = false;
+    globalThis.fetch = ((_: unknown, init?: RequestInit) => new Promise((_, reject) => {
+      init?.signal?.addEventListener("abort", () => { aborted = true; reject(new Error("aborted")); });
+    })) as unknown as typeof fetch;
+    startUpdateCheck("ls");
+    const started = Date.now();
+    await finishUpdateCheck();
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(aborted).toBe(true);
+    expect(stderr).toEqual([]);
+    expect(existsSync(stamp())).toBe(true);
+  });
+
+  test("treats an unreadable record as stale", async () => {
+    mkdirSync(join(dir, "config"), { recursive: true, mode: 0o700 });
+    writeFileSync(stamp(), "not json");
+    serve({ [api]: Response.json({ tag_name: "v99.0.0" }) });
+    startUpdateCheck("ls");
+    await finishUpdateCheck();
+    expect(requests).toHaveLength(1);
+  });
+
+  test("never checks while running upgrade", async () => {
+    serve({ [api]: Response.json({ tag_name: "v99.0.0" }) });
+    startUpdateCheck("upgrade");
+    await finishUpdateCheck();
+    expect(requests).toEqual([]);
+  });
+
+  test("prints nothing when already on the latest release", async () => {
+    serve({ [api]: Response.json({ tag_name: `v${CURRENT_VERSION}` }) });
+    startUpdateCheck("ls");
+    await finishUpdateCheck();
+    expect(stderr).toEqual([]);
   });
 });

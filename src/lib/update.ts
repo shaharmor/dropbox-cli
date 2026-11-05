@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from "crypto";
-import { accessSync, chmodSync, constants, renameSync, unlinkSync, writeFileSync } from "fs";
+import { accessSync, chmodSync, constants, readFileSync, renameSync, unlinkSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import pkg from "../../package.json";
+import { ensureProtectedDirectory } from "./auth-coordination";
+import { logError } from "./logger";
 
 const REPO = "shaharmor/dropbox-cli";
 export const RELEASES_URL = `https://github.com/${REPO}/releases`;
@@ -101,5 +103,60 @@ export async function replaceBinary(target: string, tag: string, asset: string):
       throw new UpgradeError("permission_denied", `Cannot replace ${target}.`);
     }
     throw new UpgradeError("upgrade_failed", `Could not replace ${target}.`);
+  }
+}
+
+const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const CHECK_TIMEOUT_MS = 2000;
+const GRACE_MS = 300;
+
+let pendingCheck: { controller: AbortController; latest: Promise<string | null> } | undefined;
+
+function lastCheckedAt(path: string): number | null {
+  try {
+    const value = JSON.parse(readFileSync(path, "utf8")).checked_at;
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Starts a once-a-day background lookup of the latest release, only for interactive terminals.
+ * The attempt is recorded before the request so offline or hanging networks are retried at most daily.
+ */
+export function startUpdateCheck(command: string): void {
+  if (!process.stderr.isTTY || command === "upgrade") return;
+  try {
+    const path = join(ensureProtectedDirectory(), "update-check.json");
+    const checkedAt = lastCheckedAt(path);
+    const now = Date.now();
+    if (checkedAt !== null && checkedAt <= now && now - checkedAt < CHECK_INTERVAL_MS) return;
+    writeFileSync(path, JSON.stringify({ checked_at: now }), { mode: 0o600 });
+  } catch {
+    return;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CHECK_TIMEOUT_MS);
+  const latest = latestRelease(controller.signal)
+    .then(release => release.version, () => null)
+    .finally(() => clearTimeout(timer));
+  pendingCheck = { controller, latest };
+}
+
+/** Waits briefly for a started check, then abandons it; prints a notice if a newer release exists. */
+export async function finishUpdateCheck(): Promise<void> {
+  const check = pendingCheck;
+  pendingCheck = undefined;
+  if (!check) return;
+  let grace: ReturnType<typeof setTimeout> | undefined;
+  const latest = await Promise.race([
+    check.latest,
+    new Promise<null>(resolve => { grace = setTimeout(() => resolve(null), GRACE_MS); }),
+  ]);
+  clearTimeout(grace);
+  check.controller.abort();
+  if (latest && isNewer(latest, CURRENT_VERSION)) {
+    logError(`A new version of dropbox-cli is available: ${CURRENT_VERSION} → ${latest}. Run "dropbox-cli upgrade" to update.`);
   }
 }
