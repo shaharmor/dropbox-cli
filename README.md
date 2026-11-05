@@ -49,6 +49,7 @@ dropbox-cli [options] [command]
 
 ```sh
 dropbox-cli auth login      # Log in via OAuth2
+dropbox-cli auth login --force-reauthentication  # Sign in again to choose another account
 dropbox-cli auth status     # Check if you're authenticated
 dropbox-cli auth logout     # Clear stored tokens
 
@@ -193,7 +194,7 @@ dropbox-cli ls "/Photos" --human
 Use `dropbox-cli capabilities` before using the bundled helper. It requires no
 credentials and returns `{ "ok": true, "data": { "protocol_version": 1,
 "capabilities": [...] } }`. Require the capability names, not just the executable
-version: `account-status`, `login-pkce`, `list-page`, `metadata`,
+version: `account-status`, `login-pkce`, `login-reauthenticate`, `list-page`, `metadata`,
 `download-original`, `download-progress`, `ensure-directory`, `move-single`, `move-batch`, `thumbnail-batch`, and `stream-link`.
 
 These are opt-in contracts. Legacy directory downloads, ordinary `mv`, and
@@ -202,7 +203,10 @@ not a shell. All machine reads and moves require `--expected-account` (the Dropb
 account ID, never a token). Each request authenticates from an account-checked,
 frozen credential snapshot. Account changes cannot retarget it. `auth status`
 returns local account identity without tokens; `auth login --non-interactive`
-uses browser PKCE and never prompts on stdin. Missing app configuration is a
+uses browser PKCE and never prompts on stdin. Adding `--force-reauthentication`
+(advertised by `login-reauthenticate`) makes Dropbox ask the user to sign in again,
+which signs the browser out of dropbox.com so another account can be chosen; the
+stored account stays in place until the new sign-in completes. Missing app configuration is a
 structured setup error; the helper does not provision credentials. Concurrent
 transport requests wait up to 17 seconds for asynchronous credential coordination,
 observing request cancellation, then reread the published snapshot. Network refresh

@@ -28,6 +28,29 @@ test("login preserves PKCE, validates account, and keeps tokens out of result", 
   `)).toMatchObject({exit:0});
 });
 
+test("login asks Dropbox to reauthenticate only when requested", async () => {
+  for (const force of [true, false]) {
+    expect(await f.run(`${setup}
+      await auth.login({...options,forceReauthentication:${force},openBrowser:async url=> {
+        const parsed=new URL(url);
+        assert.equal(parsed.searchParams.get('force_reauthentication'),${force ? "'true'" : "null"});
+        assert.equal(parsed.searchParams.get('code_challenge_method'),'S256');
+        await callback(url,{state:parsed.searchParams.get('state'),code:'fake-code'});
+      }});
+      assert.equal(config.readAuth().account_id,'A');
+    `)).toMatchObject({exit:0});
+  }
+});
+
+test("a cancelled reauthenticating login keeps the current account", async () => {
+  expect(await f.run(`${setup}
+    await auth.login({...options,openBrowser:async url=> {await callback(url,{state:new URL(url).searchParams.get('state'),code:'fake-code'});}});
+    const controller=new AbortController();
+    await assert.rejects(()=>auth.login({...options,forceReauthentication:true,signal:controller.signal,openBrowser:async ()=> {controller.abort();}}),e=>e.code==='auth_cancelled');
+    assert.equal(config.readAuth().account_id,'A'); assert.equal(auth.getStatus().account_email,'a@example.invalid');
+  `)).toMatchObject({exit:0});
+});
+
 for (const kind of ['wrong-state','denied','missing-code','cancel','timeout','browser-error']) {
   test(`login ${kind} closes callback resources and exposes no provider secrets`, async () => {
     expect(await f.run(`${setup}
