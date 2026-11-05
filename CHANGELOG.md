@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- One-line installer for macOS and Linux: `curl -fsSL https://github.com/shaharmor/dropbox-cli/releases/latest/download/install.sh | sh`. It installs the checksum-verified latest release to `~/.local/bin` (or `DROPBOX_CLI_INSTALL_DIR`) without sudo, and prints the PATH line to add instead of editing shell config files.
+- `upgrade` command: replaces the installed binary with the latest release after verifying its checksum, and leaves the existing binary untouched on any failure.
+- Interactive terminals show a once-a-day stderr notice when a newer release exists. Non-interactive runs make no update check.
+- Releases publish `checksums.txt` (SHA-256) and `install.sh` alongside the binaries.
 - Read-only `stream-link` machine command, advertised by `stream-link`: checks by ID that a reviewed file is still current (same content hash, or same current revision when no hash was recorded), then returns a Dropbox temporary link pinned to the reviewed revision after verifying its ID, revision, hash and `https:` URL. The link never appears in error output.
 - Original downloads accept `--progress` to report actual bytes written as bounded-rate JSON lines on stderr, advertised by `download-progress`. The final stdout envelope and integrity checks are unchanged.
 - Read-only `thumbnails` machine command: fetch up to 25 revision-pinned 256px JPEG thumbnails per Dropbox batch without downloading originals. Bounded stdin/output, account and identity checks, per-photo failures, and network-denied contract tests.
@@ -45,6 +49,8 @@
 - `bulk-mv` now reports why each file failed to move: human output shows the reason per file, and JSON output includes a `failures` list of `{ path, reason }`
 
 ### Changed
+- The release workflow fails before publishing when the pushed tag does not match the CLI's version.
+- The CLI reads its version from `package.json`, so a release bumps only that file.
 - Per explicit owner override, reject/restore do not gate on known or matching sharing contexts, including separately shared `deleted` folders. Sharing metadata is informational; no sharing scopes, permissions or ownership-transfer options are added. Such moves may expose photos to destination collaborators.
 - Machine downloads use owner-selected standard filesystem safety, not native/FFI directory anchoring; concurrent same-user ancestor swaps are explicitly outside the supported boundary.
 - Separate read retries and authentication recovery; mutations are not automatically redispatched after HTTP errors. App-credential replacement clears existing tokens before publishing the new configuration.

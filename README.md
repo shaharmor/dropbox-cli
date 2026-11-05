@@ -8,7 +8,6 @@ Built with [Bun](https://bun.sh) and [Commander.js](https://github.com/tj/comman
 
 ### Prerequisites
 
-- [Bun](https://bun.sh) runtime
 - A Dropbox app (create one at https://www.dropbox.com/developers/apps)
   - Choose **Scoped access**
   - Choose **Full Dropbox** access type
@@ -16,9 +15,19 @@ Built with [Bun](https://bun.sh) and [Commander.js](https://github.com/tj/comman
 
 ### Install
 
+On macOS or Linux:
+
 ```sh
-bun install
+curl -fsSL https://github.com/shaharmor/dropbox-cli/releases/latest/download/install.sh | sh
 ```
+
+This installs the latest release to `~/.local/bin/dropbox-cli` without sudo, after checking the download against the release's published checksums. Set `DROPBOX_CLI_INSTALL_DIR` to install somewhere else. If the directory is not on your `PATH`, the installer prints the line to add to your shell config. It never edits shell config files itself.
+
+To update, run `dropbox-cli upgrade` (or re-run the install command).
+
+For other platforms, including Windows, download a binary from the [releases page](https://github.com/shaharmor/dropbox-cli/releases).
+
+To run from source instead, install [Bun](https://bun.sh), then run `bun install` and `bun run src/index.ts`.
 
 ### Authenticate
 
@@ -158,6 +167,19 @@ dropbox-cli search "budget" --limit 5                  # Limit results
 dropbox-cli share "/Documents/report.pdf"    # Shareable link for a file
 dropbox-cli share "/Photos/Vacation"         # Shareable link for a folder
 ```
+
+#### `upgrade` - Update to the latest release
+
+Replaces the installed `dropbox-cli` binary with the latest GitHub release, after verifying its checksum. If the binary is already the latest version, nothing changes. Only works for the installed binary on macOS or Linux, not when running from source.
+
+```sh
+dropbox-cli upgrade            # Upgrade to the latest release
+dropbox-cli upgrade --human    # Upgrade and show progress
+```
+
+Returns `{ previous_version, version, updated }`. When the binary's directory is not writable, it fails with `permission_denied` and leaves the existing binary in place.
+
+When run in an interactive terminal, `dropbox-cli` checks for a newer release at most once a day and prints a one-line notice on stderr. Piped or scripted runs, including the viewer and agents, make no update check.
 
 #### `upload` - Upload files
 
