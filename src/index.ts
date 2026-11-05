@@ -2,9 +2,8 @@
 import { Command, CommanderError } from "commander";
 import { setVerbose } from "./lib/logger";
 import { setHumanMode, printSuccess, printError, printMachineError } from "./lib/output";
-import { finishUpdateCheck, startUpdateCheck } from "./lib/update";
+import { CURRENT_VERSION, finishUpdateCheck, startUpdateCheck } from "./lib/update";
 import { CredentialError, MachineError } from "./types";
-import pkg from "../package.json";
 import { registerAuthCommands } from "./commands/auth";
 import { registerBulkMvCommand } from "./commands/bulk-mv";
 import { registerCpCommand } from "./commands/cp";
@@ -29,7 +28,7 @@ program.configureOutput({ outputError: () => {} });
 program
   .name("dropbox-cli")
   .description("CLI for the Dropbox API. Outputs JSON by default.")
-  .version(pkg.version)
+  .version(CURRENT_VERSION)
   .option("--human", "Human-readable output instead of JSON")
   .option("--verbose", "Debug logging to stderr");
 

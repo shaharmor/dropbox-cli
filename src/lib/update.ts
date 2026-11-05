@@ -20,7 +20,6 @@ function parseVersion(value: string): number[] | null {
   return match ? match.slice(1).map(Number) : null;
 }
 
-/** True when `candidate` is a strictly higher `major.minor.patch` than `current`. */
 export function isNewer(candidate: string, current: string): boolean {
   const a = parseVersion(candidate);
   const b = parseVersion(current);
@@ -31,12 +30,10 @@ export function isNewer(candidate: string, current: string): boolean {
   return false;
 }
 
-/** True for a `bun build --compile` binary, false when running from source. */
 export function isCompiledBinary(): boolean {
   return Bun.main.startsWith("/$bunfs/");
 }
 
-/** The release asset for this platform, or null when no binary is published for it. */
 export function assetName(platform: string = process.platform, arch: string = process.arch): string | null {
   if (platform !== "darwin" && platform !== "linux") return null;
   if (arch !== "arm64" && arch !== "x64") return null;
@@ -64,11 +61,7 @@ export async function latestRelease(signal?: AbortSignal): Promise<{ tag: string
   return { tag, version: tag.replace(/^v/, "") };
 }
 
-/**
- * Downloads `asset` from release `tag`, verifies it against the release's checksums.txt, and
- * atomically renames it over `target`. Writing into the existing file is avoided because macOS
- * caches code signatures per inode. Any failure leaves `target` untouched.
- */
+// Never write into the existing file: macOS caches code signatures per inode.
 export async function replaceBinary(target: string, tag: string, asset: string): Promise<void> {
   const dir = dirname(target);
   try {
@@ -77,27 +70,27 @@ export async function replaceBinary(target: string, tag: string, asset: string):
     throw new UpgradeError("permission_denied", `Cannot write to ${dir}. Re-run with permission to replace ${target}.`);
   }
 
-  const base = `https://github.com/${REPO}/releases/download/${tag}`;
+  const base = `${RELEASES_URL}/download/${tag}`;
   const [binary, sums] = await Promise.all([
-    get(`${base}/${asset}`).then(response => response.arrayBuffer()),
+    get(`${base}/${asset}`).then(response => response.bytes()),
     get(`${base}/checksums.txt`).then(response => response.text()),
   ]);
   const expected = sums.split("\n")
     .map(line => line.trim().split(/\s+/))
     .find(([, name]) => name?.replace(/^\*/, "") === asset)?.[0];
   if (!expected) throw new UpgradeError("checksum_mismatch", `checksums.txt has no entry for ${asset}.`);
-  const actual = createHash("sha256").update(new Uint8Array(binary)).digest("hex");
+  const actual = createHash("sha256").update(binary).digest("hex");
   if (actual !== expected.toLowerCase()) {
     throw new UpgradeError("checksum_mismatch", `Downloaded ${asset} does not match its published checksum.`);
   }
 
   const temporary = join(dir, `.dropbox-cli.${randomUUID()}.tmp`);
   try {
-    writeFileSync(temporary, new Uint8Array(binary), { mode: 0o755 });
+    writeFileSync(temporary, binary, { mode: 0o755 });
     chmodSync(temporary, 0o755);
     renameSync(temporary, target);
   } catch (error) {
-    try { unlinkSync(temporary); } catch { /* never created or already renamed */ }
+    try { unlinkSync(temporary); } catch {}
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "EACCES" || code === "EPERM") {
       throw new UpgradeError("permission_denied", `Cannot replace ${target}.`);
@@ -121,10 +114,6 @@ function lastCheckedAt(path: string): number | null {
   }
 }
 
-/**
- * Starts a once-a-day background lookup of the latest release, only for interactive terminals.
- * The attempt is recorded before the request so offline or hanging networks are retried at most daily.
- */
 export function startUpdateCheck(command: string): void {
   if (!process.stderr.isTTY || command === "upgrade") return;
   try {
@@ -144,7 +133,6 @@ export function startUpdateCheck(command: string): void {
   pendingCheck = { controller, latest };
 }
 
-/** Waits briefly for a started check, then abandons it; prints a notice if a newer release exists. */
 export async function finishUpdateCheck(): Promise<void> {
   const check = pendingCheck;
   pendingCheck = undefined;
