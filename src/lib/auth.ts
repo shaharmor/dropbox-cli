@@ -17,6 +17,8 @@ export interface LoginOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
   callbackPort?: number;
+  /** Make Dropbox ask the user to sign in again so they can choose another account. */
+  forceReauthentication?: boolean;
   openBrowser?: (url: string) => void | Promise<void>;
 }
 
@@ -113,9 +115,9 @@ async function readAppCredentials(options: LoginOptions, deadline: Deadline): Pr
   return config;
 }
 
-function authorizationUrl(config: AppConfig, challenge: string, redirect: string, state: string): string {
+function authorizationUrl(config: AppConfig, challenge: string, redirect: string, state: string, forceReauthentication = false): string {
   const url = new URL("https://www.dropbox.com/oauth2/authorize");
-  url.search = new URLSearchParams({
+  const params = new URLSearchParams({
     client_id: config.client_id,
     response_type: "code",
     token_access_type: "offline",
@@ -123,7 +125,9 @@ function authorizationUrl(config: AppConfig, challenge: string, redirect: string
     code_challenge_method: "S256",
     redirect_uri: redirect,
     state,
-  }).toString();
+  });
+  if (forceReauthentication) params.set("force_reauthentication", "true");
+  url.search = params.toString();
   return url.toString();
 }
 
@@ -207,7 +211,7 @@ export async function login(options: LoginOptions = {}): Promise<{ account_email
     callback = callbackServer(state, options.callbackPort ?? REDIRECT_PORT);
     const redirect = `http://localhost:${await deadline.wait(callback.ready)}/callback`;
     logError("Opening browser for Dropbox authorization...");
-    await launchBrowser(authorizationUrl(config, challenge, redirect, state), options, deadline);
+    await launchBrowser(authorizationUrl(config, challenge, redirect, state, options.forceReauthentication), options, deadline);
     const code = await deadline.wait(callback.code);
     await callback.close();
     callback = undefined;

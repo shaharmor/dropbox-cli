@@ -16,6 +16,8 @@ export function registerAuthCommands(program: Command): void {
     .addHelpText("after", `
 Examples:
   $ dropbox-cli auth login          Log in via OAuth2
+  $ dropbox-cli auth login --force-reauthentication
+                                    Sign in again, choosing any account
   $ dropbox-cli auth status         Check if you're authenticated
   $ dropbox-cli auth logout         Clear stored tokens`);
 
@@ -24,7 +26,8 @@ Examples:
     .description("Authenticate with Dropbox via OAuth2")
     .option("--non-interactive", "Do not prompt for missing app credentials")
     .option("--timeout <seconds>", "Authorization deadline (1–600 seconds)", "180")
-    .action(async (options: { nonInteractive?: boolean; timeout: string }) => {
+    .option("--force-reauthentication", "Ask Dropbox to sign in again so another account can be chosen")
+    .action(async (options: { nonInteractive?: boolean; timeout: string; forceReauthentication?: boolean }) => {
       const controller = new AbortController();
       const cancel = () => controller.abort();
       process.once("SIGINT", cancel);
@@ -35,7 +38,7 @@ Examples:
           throw new CredentialError("auth_timeout", "Authorization timeout must be between 1 and 600 seconds.");
         }
         const result = await login({ interactive: options.nonInteractive ? false : undefined,
-          timeoutMs: seconds * 1000, signal: controller.signal });
+          timeoutMs: seconds * 1000, signal: controller.signal, forceReauthentication: options.forceReauthentication });
         logHuman(`\nAuthenticated as ${result.account_email}\n`);
         printSuccess({
           message: "Authentication successful",

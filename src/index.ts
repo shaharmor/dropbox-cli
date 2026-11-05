@@ -42,7 +42,7 @@ program.command("capabilities")
   .action(() => printSuccess({
     protocol_version: 1,
     capabilities: [
-      "account-status", "login-pkce", "list-page", "metadata", "download-original",
+      "account-status", "login-pkce", "login-reauthenticate", "list-page", "metadata", "download-original",
       "download-progress", "ensure-directory", "move-single", "move-batch", "thumbnail-batch",
       "stream-link",
     ],
