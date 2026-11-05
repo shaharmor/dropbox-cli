@@ -40,7 +40,7 @@ export function assetName(platform: string = process.platform, arch: string = pr
   return `dropbox-cli-${platform}-${arch}`;
 }
 
-async function get(url: string, signal?: AbortSignal): Promise<Response> {
+async function get<T>(url: string, read: (response: Response) => Promise<T>, signal?: AbortSignal): Promise<T> {
   let response: Response;
   try {
     response = await fetch(url, { signal });
@@ -48,12 +48,16 @@ async function get(url: string, signal?: AbortSignal): Promise<Response> {
     throw new UpgradeError("upgrade_failed", "Could not reach GitHub.");
   }
   if (!response.ok) throw new UpgradeError("upgrade_failed", `GitHub returned HTTP ${response.status}.`);
-  return response;
+  try {
+    return await read(response);
+  } catch {
+    throw new UpgradeError("upgrade_failed", "The download from GitHub did not complete.");
+  }
 }
 
 export async function latestRelease(signal?: AbortSignal): Promise<{ tag: string; version: string }> {
-  const response = await get(`https://api.github.com/repos/${REPO}/releases/latest`, signal);
-  const body = await response.json().catch(() => null) as { tag_name?: unknown } | null;
+  const body = await get(`https://api.github.com/repos/${REPO}/releases/latest`,
+    response => response.json() as Promise<{ tag_name?: unknown } | null>, signal);
   const tag = body?.tag_name;
   if (typeof tag !== "string" || !parseVersion(tag)) {
     throw new UpgradeError("upgrade_failed", "The latest release has no valid version tag.");
@@ -72,8 +76,8 @@ export async function replaceBinary(target: string, tag: string, asset: string):
 
   const base = `${RELEASES_URL}/download/${tag}`;
   const [binary, sums] = await Promise.all([
-    get(`${base}/${asset}`).then(response => response.bytes()),
-    get(`${base}/checksums.txt`).then(response => response.text()),
+    get(`${base}/${asset}`, response => response.bytes()),
+    get(`${base}/checksums.txt`, response => response.text()),
   ]);
   const expected = sums.split("\n")
     .map(line => line.trim().split(/\s+/))

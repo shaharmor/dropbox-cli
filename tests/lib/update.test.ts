@@ -125,6 +125,18 @@ describe("replaceBinary", () => {
     expect(readFileSync(target(), "utf8")).toBe("old binary");
   });
 
+  test("fails when the download is cut off mid-transfer", async () => {
+    const interrupted = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("new bi"));
+        controller.error(new Error("connection reset"));
+      },
+    });
+    serve({ [`${base}/${asset}`]: new Response(interrupted), [`${base}/checksums.txt`]: `${sha256("new binary")}  ${asset}\n` });
+    expect((await failure(replaceBinary(target(), "v1.2.0", asset))).code).toBe("upgrade_failed");
+    expect(readFileSync(target(), "utf8")).toBe("old binary");
+  });
+
   test("refuses a read-only directory before downloading", async () => {
     serve({});
     chmodSync(dir, 0o555);
