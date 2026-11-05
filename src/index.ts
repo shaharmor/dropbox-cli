@@ -17,6 +17,7 @@ import { registerSearchCommand } from "./commands/search";
 import { registerShareCommand } from "./commands/share";
 import { registerStreamLinkCommand } from "./commands/stream-link";
 import { registerThumbnailsCommand } from "./commands/thumbnails";
+import { registerUpgradeCommand } from "./commands/upgrade";
 import { registerUploadCommand } from "./commands/upload";
 
 const program = new Command();
@@ -63,6 +64,7 @@ registerSearchCommand(program);
 registerShareCommand(program);
 registerStreamLinkCommand(program);
 registerThumbnailsCommand(program);
+registerUpgradeCommand(program);
 registerUploadCommand(program);
 
 try {

@@ -29,6 +29,11 @@ export function isNewer(candidate: string, current: string): boolean {
   return false;
 }
 
+/** True for a `bun build --compile` binary, false when running from source. */
+export function isCompiledBinary(): boolean {
+  return Bun.main.startsWith("/$bunfs/");
+}
+
 /** The release asset for this platform, or null when no binary is published for it. */
 export function assetName(platform: string = process.platform, arch: string = process.arch): string | null {
   if (platform !== "darwin" && platform !== "linux") return null;
