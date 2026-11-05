@@ -7,6 +7,7 @@
 - `upgrade` command: replaces the installed binary with the latest release after verifying its checksum, and leaves the existing binary untouched on any failure.
 - Interactive terminals show a once-a-day stderr notice when a newer release exists. Non-interactive runs make no update check.
 - Releases publish `checksums.txt` (SHA-256) and `install.sh` alongside the binaries.
+- `auth login --force-reauthentication`, advertised by `login-reauthenticate`: asks Dropbox to sign in again (signing the browser out of dropbox.com) so another account can be chosen. The stored account stays until the new sign-in completes.
 - Read-only `stream-link` machine command, advertised by `stream-link`: checks by ID that a reviewed file is still current (same content hash, or same current revision when no hash was recorded), then returns a Dropbox temporary link pinned to the reviewed revision after verifying its ID, revision, hash and `https:` URL. The link never appears in error output.
 - Original downloads accept `--progress` to report actual bytes written as bounded-rate JSON lines on stderr, advertised by `download-progress`. The final stdout envelope and integrity checks are unchanged.
 - Read-only `thumbnails` machine command: fetch up to 25 revision-pinned 256px JPEG thumbnails per Dropbox batch without downloading originals. Bounded stdin/output, account and identity checks, per-photo failures, and network-denied contract tests.
