@@ -2,6 +2,7 @@
 import { Command, CommanderError } from "commander";
 import { setVerbose } from "./lib/logger";
 import { setHumanMode, printSuccess, printError, printMachineError } from "./lib/output";
+import { CURRENT_VERSION, finishUpdateCheck, startUpdateCheck } from "./lib/update";
 import { CredentialError, MachineError } from "./types";
 import { registerAuthCommands } from "./commands/auth";
 import { registerBulkMvCommand } from "./commands/bulk-mv";
@@ -16,6 +17,7 @@ import { registerSearchCommand } from "./commands/search";
 import { registerShareCommand } from "./commands/share";
 import { registerStreamLinkCommand } from "./commands/stream-link";
 import { registerThumbnailsCommand } from "./commands/thumbnails";
+import { registerUpgradeCommand } from "./commands/upgrade";
 import { registerUploadCommand } from "./commands/upload";
 
 const program = new Command();
@@ -26,16 +28,18 @@ program.configureOutput({ outputError: () => {} });
 program
   .name("dropbox-cli")
   .description("CLI for the Dropbox API. Outputs JSON by default.")
-  .version("1.0.0")
+  .version(CURRENT_VERSION)
   .option("--human", "Human-readable output instead of JSON")
   .option("--verbose", "Debug logging to stderr");
 
 // Apply global options before any command runs
-program.hook("preAction", (thisCommand) => {
+program.hook("preAction", (thisCommand, actionCommand) => {
   const opts = thisCommand.optsWithGlobals();
   setVerbose(opts.verbose ?? false);
   setHumanMode(opts.human ?? false);
+  startUpdateCheck(actionCommand.name());
 });
+program.hook("postAction", () => finishUpdateCheck());
 
 program.command("capabilities")
   .description("Describe the versioned viewer machine contract without authentication")
@@ -62,6 +66,7 @@ registerSearchCommand(program);
 registerShareCommand(program);
 registerStreamLinkCommand(program);
 registerThumbnailsCommand(program);
+registerUpgradeCommand(program);
 registerUploadCommand(program);
 
 try {

@@ -101,6 +101,6 @@ Never bump versions, create tags, or push tags without the user's explicit reque
 
 When asked to release:
 
-1. Bump the version in **both** `package.json` and `src/index.ts` (`.version(...)`).
+1. Bump the version in `package.json`. The CLI reads its version from there, and the release workflow fails if the tag does not match it.
 2. Move `## Unreleased` entries in `CHANGELOG.md` under a new `## [x.y.z] - YYYY-MM-DD` heading.
 3. The release notes are the **entire** `CHANGELOG.md` file, so review it as public text before tagging.
