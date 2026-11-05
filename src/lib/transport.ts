@@ -15,7 +15,7 @@ export const CONTENT_BASE = "https://content.dropboxapi.com/2";
 export const READ_ENDPOINTS = new Set([
   "files/list_folder", "files/list_folder/continue", "files/get_metadata",
   "files/search_v2", "files/search/continue_v2", "users/get_current_account",
-  "files/download", "files/get_thumbnail_batch", "sharing/list_shared_links",
+  "files/download", "files/get_thumbnail_batch", "files/get_temporary_link", "sharing/list_shared_links",
   "files/copy_batch/check_v2", "files/move_batch/check_v2", "files/upload_session/finish_batch/check",
 ]);
 

@@ -194,7 +194,7 @@ Use `dropbox-cli capabilities` before using the bundled helper. It requires no
 credentials and returns `{ "ok": true, "data": { "protocol_version": 1,
 "capabilities": [...] } }`. Require the capability names, not just the executable
 version: `account-status`, `login-pkce`, `list-page`, `metadata`,
-`download-original`, `download-progress`, `ensure-directory`, `move-single`, `move-batch`, and `thumbnail-batch`.
+`download-original`, `download-progress`, `ensure-directory`, `move-single`, `move-batch`, `thumbnail-batch`, and `stream-link`.
 
 These are opt-in contracts. Legacy directory downloads, ordinary `mv`, and
 `bulk-mv` pattern commands are **not** the viewer interface. Launch with argument arrays,
@@ -333,6 +333,30 @@ hash. `unavailable` is a plain string, not a structured error: it covers
 unsupported images, provider failures and mismatching or malformed thumbnails, and
 is never evidence for a photo decision. A response with the wrong number of entries
 fails the whole request with `invalid_response`.
+
+### Stream links
+
+```sh
+dropbox-cli stream-link rev:REVISION --expected-id id:VIDEO \
+  --expected-current-rev CURRENT_REVISION [--expected-hash HASH] \
+  --expected-account ACCOUNT
+```
+
+`stream-link` is read-only. It requires exactly one `rev:` source (the reviewed
+revision), `--expected-id`, `--expected-current-rev`, and an optional 64-hex
+`--expected-hash`. It first reads the file's current metadata by ID, wherever the
+file now lives. The file is still current when its content hash equals
+`--expected-hash`, or, without a hash, when its revision equals
+`--expected-current-rev`; otherwise it fails with `identity_mismatch` and no link
+is requested. It then makes one `files/get_temporary_link` request for the `rev:`
+source. The returned metadata must match the expected ID, the reviewed revision
+and, when supplied, the hash (`identity_mismatch` otherwise), and the link must be
+an `https:` URL of at most 4096 characters (`invalid_response` otherwise).
+
+Success returns `{id, rev, content_hash, link}`. The link is a Dropbox temporary
+link: a bearer URL to that one file revision, valid for about four hours. Treat it
+like a credential: do not log or persist it, and do not pass it in argv. Errors
+never include the link or echo arguments.
 
 ### Sharing policy — explicit owner override
 

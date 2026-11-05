@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- Read-only `stream-link` machine command, advertised by `stream-link`: checks by ID that a reviewed file is still current (same content hash, or same current revision when no hash was recorded), then returns a Dropbox temporary link pinned to the reviewed revision after verifying its ID, revision, hash and `https:` URL. The link never appears in error output.
 - Original downloads accept `--progress` to report actual bytes written as bounded-rate JSON lines on stderr, advertised by `download-progress`. The final stdout envelope and integrity checks are unchanged.
 - Read-only `thumbnails` machine command: fetch up to 25 revision-pinned 256px JPEG thumbnails per Dropbox batch without downloading originals. Bounded stdin/output, account and identity checks, per-photo failures, and network-denied contract tests.
 - Checked `mv-batch` machine contract: bounded stdin, shared parent validation, four-way photo preflight, ID-addressed batch submission, per-photo outcomes and read-only async-job polling without replay.
