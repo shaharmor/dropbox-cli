@@ -31,7 +31,7 @@ export function formatSuccess<T>(data: T): SuccessEnvelope<T> {
 }
 
 export function formatError(code: string, message: string, details?: Record<string, unknown>): ErrorEnvelope {
-  return { ok: false, error: details === undefined ? { code, message } : { code, message, details } };
+  return { ok: false, error: { code, message, details } };
 }
 
 export function printSuccess<T>(data: T): void {

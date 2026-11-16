@@ -1,8 +1,8 @@
 import type { Command } from "commander";
-import { contentUpload, contentUploadRaw } from "../lib/api";
+import { contentUpload, contentUploadRaw, type RawResult } from "../lib/api";
 import { printSuccess, formatBytes } from "../lib/output";
 import { log, logHuman } from "../lib/logger";
-import { AUTH_REFUSED, parseDropboxError } from "../lib/transport";
+import { responseError } from "../lib/transport";
 import { statSync } from "fs";
 import { basename, posix, resolve } from "path";
 import { CommandError, type FileMetadata } from "../types";
@@ -87,7 +87,7 @@ async function chunkedUpload(
 async function appendChunk(file: Blob, sessionId: string, offset: number): Promise<number> {
   const chunk = file.slice(offset, offset + CHUNK_SIZE);
   for (let lost = 0; ; lost++) {
-    let result: Awaited<ReturnType<typeof contentUploadRaw>>;
+    let result: RawResult;
     try {
       // Appending at a fixed offset is replay-safe: Dropbox refuses a duplicate with incorrect_offset.
       result = await contentUploadRaw("files/upload_session/append_v2", {
@@ -97,12 +97,11 @@ async function appendChunk(file: Blob, sessionId: string, offset: number): Promi
     } catch (error) {
       if (!(error instanceof CommandError && error.code === "connection_error") || lost >= MAX_LOST_RESPONSES) throw error;
       log(`Upload chunk at offset ${offset} was lost, re-sending`);
-      await Bun.sleep(Math.min(2 ** lost, 16) * 1000);
+      await Bun.sleep(2 ** lost * 1000);
       continue;
     }
 
     if (result.ok) return offset + chunk.size;
-    if (result.status === 401) throw new CommandError("auth_error", AUTH_REFUSED, 2);
 
     const error = (result.data as { error?: { ".tag"?: unknown; correct_offset?: unknown } } | null)?.error;
     if (result.status === 409 && error?.[".tag"] === "incorrect_offset") {
@@ -112,8 +111,7 @@ async function appendChunk(file: Blob, sessionId: string, offset: number): Promi
       throw new CommandError("incorrect_offset", `Dropbox expected upload offset ${String(correct)}, which does not follow offset ${offset}.`);
     }
 
-    const { code, message } = parseDropboxError(result.data);
-    throw new CommandError(code, message);
+    throw responseError(result.status, result.data);
   }
 }
 

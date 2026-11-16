@@ -196,9 +196,12 @@ describe("upload sessions", () => {
   const finishes = () => calls.filter((call) => call.endpoint === "files/upload_session/finish");
   const offsets = (list: Call[]) => list.map((call) => call.arg.cursor?.offset);
 
+  // Built once; each test writes a prefix of it.
+  const PATTERN = new Uint8Array(3 * CHUNK + 1);
+  for (let i = 0; i < PATTERN.length; i++) PATTERN[i] = i % 251;
+
   function writeLocal(size: number): Uint8Array {
-    const bytes = new Uint8Array(size);
-    for (let i = 0; i < size; i++) bytes[i] = i % 251;
+    const bytes = PATTERN.subarray(0, size);
     writeFileSync(LOCAL, bytes);
     return bytes;
   }

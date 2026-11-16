@@ -253,6 +253,13 @@ export function parseDropboxError(body: unknown): { code: string; message: strin
   return { code: "api_error", message: "API request failed" };
 }
 
+/** The human-command error for a failed Dropbox response and its already-read error body. */
+export function responseError(status: number, body: unknown): CommandError {
+  if (status === 401) return new CommandError("auth_error", AUTH_REFUSED, 2);
+  const { code, message } = parseDropboxError(body);
+  return new CommandError(code, message);
+}
+
 // ---------------------------------------------------------------------------
 // Machine responses
 // ---------------------------------------------------------------------------

@@ -1,13 +1,18 @@
 import { log } from "./logger";
-import { AUTH_REFUSED, CONTENT_BASE, RPC_BASE, fetchWithRetry, parseDropboxError, readError } from "./transport";
+import { CONTENT_BASE, RPC_BASE, fetchWithRetry, readError, responseError } from "./transport";
 import { CommandError, type RequestOptions } from "../types";
 
+export type RawResult = { ok: boolean; status: number; data: unknown };
+
 async function failResponse(response: Response): Promise<never> {
-  if (response.status === 401) {
-    throw new CommandError("auth_error", AUTH_REFUSED, 2);
-  }
-  const { code, message } = parseDropboxError(await readError(response));
-  throw new CommandError(code, message);
+  // A refused token needs no body: its error is fixed.
+  const body = response.status === 401 ? undefined : await readError(response);
+  throw responseError(response.status, body);
+}
+
+async function rawResult(response: Response): Promise<RawResult> {
+  const data = response.ok ? await response.json().catch(() => null) : await readError(response);
+  return { ok: response.ok, status: response.status, data };
 }
 
 export async function rpc<T = unknown>(
@@ -26,19 +31,14 @@ export async function rpc<T = unknown>(
   return response.json() as Promise<T>;
 }
 
-export async function rpcRaw(endpoint: string, body: Record<string, unknown> = {}, options: RequestOptions = {}): Promise<{
-  ok: boolean;
-  status: number;
-  data: unknown;
-}> {
+export async function rpcRaw(endpoint: string, body: Record<string, unknown> = {}, options: RequestOptions = {}): Promise<RawResult> {
   const response = await fetchWithRetry(`${RPC_BASE}/${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   }, options);
 
-  const data = response.ok ? await response.json().catch(() => null) : await readError(response);
-  return { ok: response.ok, status: response.status, data };
+  return rawResult(response);
 }
 
 function sendContent(
@@ -75,11 +75,8 @@ export async function contentUploadRaw(
   metadata: Record<string, unknown>,
   content: Blob,
   options: RequestOptions = {}
-): Promise<{ ok: boolean; status: number; data: unknown }> {
-  const response = await sendContent(endpoint, metadata, content, options);
-
-  const data = response.ok ? await response.json().catch(() => null) : await readError(response);
-  return { ok: response.ok, status: response.status, data };
+): Promise<RawResult> {
+  return rawResult(await sendContent(endpoint, metadata, content, options));
 }
 
 export async function contentDownload(

@@ -223,9 +223,9 @@ async function downloadSingleFile(
   force: boolean
 ): Promise<{ remote_path: string; local_path: string; size: number }> {
   if (!force) {
-    const fileName = basename(remotePath);
-    const exists = await lstat(join(localDir, fileName)).then(() => true, () => false);
-    if (exists) throw outputExists(fileName);
+    const requestedName = basename(remotePath);
+    const exists = await lstat(join(localDir, requestedName)).then(() => true, () => false);
+    if (exists) throw outputExists(requestedName);
   }
 
   const { metadata, body } = await contentDownload("files/download", {
