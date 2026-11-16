@@ -16,16 +16,13 @@ mock.module("../../src/lib/output", () => ({
   printSuccess: (data: unknown) => {
     captured.success = data;
   },
-  printError: (code: string, message: string) => {
-    throw new Error(`EXIT:${code}`);
-  },
   isHuman: () => false,
   formatBytes: (n: number) => `${n} B`,
 }));
 
 
 
-import { Command } from "commander";
+import { Command, CommanderError } from "commander";
 import { registerSearchCommand } from "../../src/commands/search";
 
 function makeMatch(
@@ -177,6 +174,18 @@ describe("search command", () => {
       cursor: "search-cursor-1",
     });
     expect(captured.success).toHaveLength(2);
+  });
+
+  test.each(["x", "0", "-5", "1.5"])("rejects --limit %p before any request", async (value) => {
+    const program = new Command();
+    program.exitOverride();
+    program.configureOutput({ outputError: () => {} });
+    registerSearchCommand(program);
+
+    const error = await program.parseAsync(["node", "test", "search", "q", "--limit", value]).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CommanderError);
+    expect(error).toMatchObject({ code: "commander.invalidArgument", exitCode: 1 });
+    expect(mockRpc).not.toHaveBeenCalled();
   });
 
   test("returns empty array when no results", async () => {

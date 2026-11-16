@@ -11,16 +11,11 @@ mock.module("../../src/lib/api", () => ({
   pollBatchJob: mockPollBatchJob,
 }));
 
-let captured: { success?: unknown; error?: { code: string; message: string } } =
-  {};
+let captured: { success?: unknown } = {};
 
 mock.module("../../src/lib/output", () => ({
   printSuccess: (data: unknown) => {
     captured.success = data;
-  },
-  printError: (code: string, message: string) => {
-    captured.error = { code, message };
-    throw new Error(`EXIT:${code}`);
   },
   isHuman: () => false,
 }));
@@ -29,6 +24,7 @@ mock.module("../../src/lib/output", () => ({
 
 import { Command } from "commander";
 import { registerCpCommand } from "../../src/commands/cp";
+import { CommandError } from "../../src/types";
 
 describe("cp command", () => {
   beforeEach(() => {
@@ -168,5 +164,32 @@ describe("cp command", () => {
         ],
       })
     );
+  });
+
+  test.each([
+    ["/Backup/", "/Backup/x.txt"],
+    ["/", "/x.txt"],
+  ])("batch destination %p builds %p", async (dest, toPath) => {
+    mockRpc.mockResolvedValueOnce({ ".tag": "complete", entries: [] });
+
+    const program = new Command();
+    registerCpCommand(program);
+    await program.parseAsync(["node", "test", "cp", "/a/x.txt", "/b/y.txt", dest]);
+
+    expect(mockRpc).toHaveBeenCalledWith("files/copy_batch_v2", expect.objectContaining({
+      entries: [
+        { from_path: "/a/x.txt", to_path: toPath },
+        { from_path: "/b/y.txt", to_path: toPath.replace("x.txt", "y.txt") },
+      ],
+    }));
+  });
+
+  test("rejects a single argument as invalid_args", async () => {
+    const program = new Command();
+    registerCpCommand(program);
+    const error = await program.parseAsync(["node", "test", "cp", "/a.txt"]).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CommandError);
+    expect(error).toMatchObject({ code: "invalid_args", message: "Usage: dropbox-cli cp <source...> <destination>", exitCode: 1 });
+    expect(mockRpc).not.toHaveBeenCalled();
   });
 });

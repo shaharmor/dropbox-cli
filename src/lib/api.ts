@@ -1,14 +1,18 @@
 import { log } from "./logger";
-import { printError } from "./output";
-import { AUTH_REFUSED, CONTENT_BASE, RPC_BASE, fetchWithRetry, parseDropboxError, readError } from "./transport";
-import type { RequestOptions } from "../types";
+import { CONTENT_BASE, RPC_BASE, fetchWithRetry, readError, responseError } from "./transport";
+import { CommandError, type RequestOptions } from "../types";
+
+export type RawResult = { ok: boolean; status: number; data: unknown };
 
 async function failResponse(response: Response): Promise<never> {
-  if (response.status === 401) {
-    printError("auth_error", AUTH_REFUSED, 2);
-  }
-  const { code, message } = parseDropboxError(await readError(response));
-  printError(code, message);
+  // A refused token needs no body: its error is fixed.
+  const body = response.status === 401 ? undefined : await readError(response);
+  throw responseError(response.status, body);
+}
+
+async function rawResult(response: Response): Promise<RawResult> {
+  const data = response.ok ? await response.json().catch(() => null) : await readError(response);
+  return { ok: response.ok, status: response.status, data };
 }
 
 export async function rpc<T = unknown>(
@@ -27,39 +31,52 @@ export async function rpc<T = unknown>(
   return response.json() as Promise<T>;
 }
 
-export async function rpcRaw(endpoint: string, body: Record<string, unknown> = {}, options: RequestOptions = {}): Promise<{
-  ok: boolean;
-  status: number;
-  data: unknown;
-}> {
+export async function rpcRaw(endpoint: string, body: Record<string, unknown> = {}, options: RequestOptions = {}): Promise<RawResult> {
   const response = await fetchWithRetry(`${RPC_BASE}/${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   }, options);
 
-  const data = response.ok ? await response.json().catch(() => null) : await readError(response);
-  return { ok: response.ok, status: response.status, data };
+  return rawResult(response);
 }
 
-export async function contentUpload<T = unknown>(
+function sendContent(
   endpoint: string,
   metadata: Record<string, unknown>,
-  content: Uint8Array,
-  options: RequestOptions = {}
-): Promise<T> {
-  const response = await fetchWithRetry(`${CONTENT_BASE}/${endpoint}`, {
+  content: Blob,
+  options: RequestOptions,
+): Promise<Response> {
+  return fetchWithRetry(`${CONTENT_BASE}/${endpoint}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/octet-stream",
       "Dropbox-API-Arg": JSON.stringify(metadata),
     },
-    body: content as BodyInit,
-  }, { ...options, retry: "mutation" });
+    body: content,
+  }, options);
+}
+
+export async function contentUpload<T = unknown>(
+  endpoint: string,
+  metadata: Record<string, unknown>,
+  content: Blob,
+  options: RequestOptions = {}
+): Promise<T> {
+  const response = await sendContent(endpoint, metadata, content, options);
 
   if (!response.ok) await failResponse(response);
 
   return response.json() as Promise<T>;
+}
+
+export async function contentUploadRaw(
+  endpoint: string,
+  metadata: Record<string, unknown>,
+  content: Blob,
+  options: RequestOptions = {}
+): Promise<RawResult> {
+  return rawResult(await sendContent(endpoint, metadata, content, options));
 }
 
 export async function contentDownload(
@@ -100,6 +117,6 @@ export async function pollBatchJob<T = unknown>(endpoint: string, asyncJobId: st
     }
 
     // Failed
-    printError("batch_error", `${prefix}Batch job failed: ${result[".tag"]}`);
+    throw new CommandError("batch_error", `${prefix}Batch job failed: ${result[".tag"]}`);
   }
 }

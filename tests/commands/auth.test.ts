@@ -10,15 +10,11 @@ mock.module("../../src/lib/auth", () => ({
   getStatus: mockGetStatus,
 }));
 
-let captured: { success?: unknown; error?: { code: string; message: string } } = {};
+let captured: { success?: unknown } = {};
 
 mock.module("../../src/lib/output", () => ({
   printSuccess: (data: unknown) => {
     captured.success = data;
-  },
-  printError: (code: string, message: string) => {
-    captured.error = { code, message };
-    throw new Error(`EXIT:${code}`);
   },
   isHuman: () => false,
 }));
@@ -27,7 +23,7 @@ mock.module("../../src/lib/output", () => ({
 
 import { Command } from "commander";
 import { registerAuthCommands } from "../../src/commands/auth";
-import { CredentialError } from "../../src/types";
+import { CommandError, CredentialError } from "../../src/types";
 
 describe("auth commands", () => {
   beforeEach(() => {
@@ -61,22 +57,19 @@ describe("auth commands", () => {
 
       const program = new Command();
       registerAuthCommands(program);
-      await expect(
-        program.parseAsync(["node", "test", "auth", "login"])
-      ).rejects.toThrow("EXIT:auth_failed");
-      expect(captured.error).toEqual({
-        code: "auth_failed",
-        message: "Authentication failed",
-      });
+      const error = await program.parseAsync(["node", "test", "auth", "login"]).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(CommandError);
+      expect(error).toMatchObject({ code: "auth_failed", message: "Authentication failed", exitCode: 1 });
     });
 
     test("preserves typed connection errors and supports noninteractive bounded login", async () => {
       mockLogin.mockRejectedValueOnce(new CredentialError("auth_cancelled", "Authentication cancelled."));
       const program = new Command();
       registerAuthCommands(program);
-      await expect(program.parseAsync(["bun", "test", "auth", "login", "--non-interactive", "--timeout", "10"])).rejects.toThrow("EXIT:auth_cancelled");
+      const error = await program.parseAsync(["bun", "test", "auth", "login", "--non-interactive", "--timeout", "10"]).catch((e: unknown) => e);
       expect(mockLogin).toHaveBeenCalledWith(expect.objectContaining({ interactive: false, timeoutMs: 10000, signal: expect.any(AbortSignal) }));
-      expect(captured.error).toEqual({ code: "auth_cancelled", message: "Authentication cancelled." });
+      expect(error).toBeInstanceOf(CommandError);
+      expect(error).toMatchObject({ code: "auth_cancelled", message: "Authentication cancelled.", exitCode: 2 });
     });
   });
 

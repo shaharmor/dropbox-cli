@@ -16,9 +16,6 @@ mock.module("../../src/lib/output", () => ({
   printSuccess: (data: unknown) => {
     captured.success = data;
   },
-  printError: (code: string, message: string) => {
-    throw new Error(`EXIT:${code}`);
-  },
   isHuman: () => false,
   formatBytes: (n: number) => `${n} B`,
   formatDate: (s: string) => s,

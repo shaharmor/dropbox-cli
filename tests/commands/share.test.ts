@@ -11,16 +11,11 @@ mock.module("../../src/lib/api", () => ({
   pollBatchJob: mock(),
 }));
 
-let captured: { success?: unknown; error?: { code: string; message: string } } =
-  {};
+let captured: { success?: unknown } = {};
 
 mock.module("../../src/lib/output", () => ({
   printSuccess: (data: unknown) => {
     captured.success = data;
-  },
-  printError: (code: string, message: string) => {
-    captured.error = { code, message };
-    throw new Error(`EXIT:${code}`);
   },
   isHuman: () => false,
 }));
@@ -29,6 +24,7 @@ mock.module("../../src/lib/output", () => ({
 
 import { Command } from "commander";
 import { registerShareCommand } from "../../src/commands/share";
+import { CommandError } from "../../src/types";
 
 describe("share command", () => {
   beforeEach(() => {
@@ -107,11 +103,9 @@ describe("share command", () => {
 
     const program = new Command();
     registerShareCommand(program);
-    await expect(
-      program.parseAsync(["node", "test", "share", "/secret.txt"])
-    ).rejects.toThrow("EXIT:share_error");
-    expect(captured.error?.code).toBe("share_error");
-    expect(captured.error?.message).toBe("no_permission/.");
+    const error = await program.parseAsync(["node", "test", "share", "/secret.txt"]).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CommandError);
+    expect(error).toMatchObject({ code: "share_error", message: "no_permission/.", exitCode: 1 });
   });
 
   test("errors with generic message when error_summary is missing", async () => {
@@ -123,9 +117,8 @@ describe("share command", () => {
 
     const program = new Command();
     registerShareCommand(program);
-    await expect(
-      program.parseAsync(["node", "test", "share", "/path"])
-    ).rejects.toThrow("EXIT:share_error");
-    expect(captured.error?.message).toBe("Failed to create shared link");
+    const error = await program.parseAsync(["node", "test", "share", "/path"]).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CommandError);
+    expect(error).toMatchObject({ code: "share_error", message: "Failed to create shared link", exitCode: 1 });
   });
 });

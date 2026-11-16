@@ -1,7 +1,8 @@
 import type { Command } from "commander";
 import { realpathSync } from "fs";
 import { logHuman } from "../lib/logger";
-import { printError, printSuccess } from "../lib/output";
+import { printSuccess } from "../lib/output";
+import { CommandError } from "../types";
 import {
   CURRENT_VERSION, RELEASES_URL, UpgradeError, assetName, isCompiledBinary, isNewer, latestRelease, replaceBinary,
 } from "../lib/update";
@@ -17,7 +18,7 @@ Examples:
     .action(async () => {
       const asset = assetName();
       if (!isCompiledBinary() || !asset) {
-        printError("upgrade_unsupported",
+        throw new CommandError("upgrade_unsupported",
           `upgrade only replaces an installed dropbox-cli binary on macOS or Linux. Download releases from ${RELEASES_URL}.`);
       }
       try {
@@ -33,7 +34,7 @@ Examples:
         logHuman(`Upgraded dropbox-cli ${CURRENT_VERSION} → ${latest.version}.`);
         printSuccess({ previous_version: CURRENT_VERSION, version: latest.version, updated: true });
       } catch (error) {
-        if (error instanceof UpgradeError) printError(error.code, error.message);
+        if (error instanceof UpgradeError) throw new CommandError(error.code, error.message);
         throw error;
       }
     });

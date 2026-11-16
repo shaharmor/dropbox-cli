@@ -1,10 +1,9 @@
 import { authDeadline } from "./auth-coordination";
 import { getCredentialSnapshot } from "./credentials";
 import { log } from "./logger";
-import { printError } from "./output";
 import { readBounded, waitForRequest } from "./streams";
 import {
-  CredentialError, MachineError,
+  CommandError, CredentialError, MachineError,
   type CredentialSnapshot, type MachineErrorDetails, type RequestOptions,
 } from "../types";
 
@@ -189,8 +188,8 @@ function transportFailure(error: unknown, options: RequestOptions, submittedMuta
       "Read or pre-submission request could not be completed.",
     );
   }
-  if (error instanceof CredentialError) printError(error.code, error.message, 2);
-  printError("connection_error", "Dropbox request could not be completed.");
+  if (error instanceof CredentialError) throw new CommandError(error.code, error.message, 2);
+  throw new CommandError("connection_error", "Dropbox request could not be completed.");
 }
 
 /** Seconds from a valid Retry-After header, or undefined if absent, malformed or overflowing. */
@@ -252,6 +251,13 @@ export function parseDropboxError(body: unknown): { code: string; message: strin
     };
   }
   return { code: "api_error", message: "API request failed" };
+}
+
+/** The human-command error for a failed Dropbox response and its already-read error body. */
+export function responseError(status: number, body: unknown): CommandError {
+  if (status === 401) return new CommandError("auth_error", AUTH_REFUSED, 2);
+  const { code, message } = parseDropboxError(body);
+  return new CommandError(code, message);
 }
 
 // ---------------------------------------------------------------------------

@@ -7,7 +7,9 @@ import {
   formatBytes,
   formatDate,
   printSuccess,
+  printError,
 } from "../../src/lib/output";
+import { CommandError } from "../../src/types";
 
 describe("output", () => {
   test("formatSuccess wraps data in ok envelope", () => {
@@ -76,6 +78,26 @@ describe("output", () => {
       const result = formatDate("2024-01-15T10:30:00Z");
       expect(typeof result).toBe("string");
       expect(result.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("printError", () => {
+    test("outputs the pretty-printed error envelope without details", () => {
+      const logSpy = spyOn(console, "log").mockImplementation(() => {});
+      printError(new CommandError("not_found", "File not found", 2));
+      expect(logSpy).toHaveBeenCalledWith(
+        JSON.stringify({ ok: false, error: { code: "not_found", message: "File not found" } }, null, 2)
+      );
+      logSpy.mockRestore();
+    });
+
+    test("includes details when the error carries them", () => {
+      const logSpy = spyOn(console, "log").mockImplementation(() => {});
+      printError(new CommandError("bulk_failed", "Some files did not move", 1, { moved: 1 }));
+      expect(logSpy).toHaveBeenCalledWith(
+        JSON.stringify({ ok: false, error: { code: "bulk_failed", message: "Some files did not move", details: { moved: 1 } } }, null, 2)
+      );
+      logSpy.mockRestore();
     });
   });
 

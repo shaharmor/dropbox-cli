@@ -1,9 +1,9 @@
 import type { Command } from "commander";
 import { rpc, pollBatchJob } from "../lib/api";
-import { printSuccess, printError } from "../lib/output";
+import { printSuccess } from "../lib/output";
 import { logHuman } from "../lib/logger";
-import type { DropboxEntry, BatchResult } from "../types";
-import { basename } from "path";
+import { CommandError, type DropboxEntry, type BatchResult } from "../types";
+import { basename, posix } from "path";
 
 export function registerCpCommand(program: Command): void {
   program
@@ -20,7 +20,7 @@ Examples:
   $ dropbox-cli cp /file.txt /file-copy.txt --autorename       Auto-rename on conflict`)
     .action(async (sources: string[], options: { autorename?: boolean }) => {
       if (sources.length < 2) {
-        printError("invalid_args", "Usage: dropbox-cli cp <source...> <destination>");
+        throw new CommandError("invalid_args", "Usage: dropbox-cli cp <source...> <destination>");
       }
 
       const dest = sources[sources.length - 1];
@@ -42,7 +42,7 @@ Examples:
         // Batch copy
         const entries = srcPaths.map((src) => ({
           from_path: src,
-          to_path: `${dest}/${basename(src)}`,
+          to_path: posix.join(dest, basename(src)),
         }));
 
         const result = await rpc<BatchResult>("files/copy_batch_v2", {

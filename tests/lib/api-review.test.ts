@@ -1,5 +1,7 @@
-import { test, expect, beforeEach, afterEach } from "bun:test";
-import { fixture } from "./auth-fixture";
+import { test, expect, beforeEach, afterEach, setDefaultTimeout } from "bun:test";
+import { fixture, PROCESS_TEST_TIMEOUT_MS } from "./auth-fixture";
+
+setDefaultTimeout(PROCESS_TEST_TIMEOUT_MS);
 
 let f: ReturnType<typeof fixture>;
 beforeEach(() => { f = fixture(); });
@@ -127,7 +129,7 @@ test("optional first-401 diagnostics never block successful read recovery on mal
     clearTimeout(watchdog);
   `);
   expect(out).toMatchObject({exit:0,stderr:""});
-}, 10000);
+});
 
 test("original read-401 evidence never overrides account mismatch or request cancellation", async () => {
   const out=await f.run(`${seed}
@@ -141,7 +143,7 @@ test("original read-401 evidence never overrides account mismatch or request can
     clearTimeout(watchdog);assert.equal(calls,1);
   `);
   expect(out).toMatchObject({exit:0,stderr:""});
-},5000);
+});
 
 test("structured read and mutation 401 use auth_error with sanitized bounded details and no mutation recovery", async () => {
   const out = await f.run(`${seed}

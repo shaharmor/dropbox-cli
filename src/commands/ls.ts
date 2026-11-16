@@ -3,7 +3,8 @@ import { rpc } from "../lib/api";
 import { machineRpc, validateMetadata } from "../lib/machine-api";
 import { printSuccess, formatBytes, formatDate, runMachine } from "../lib/output";
 import { logHuman } from "../lib/logger";
-import { MachineError, type ListFolderResult, type DropboxEntry, type MachineOptions } from "../types";
+import { positiveInteger } from "../lib/options";
+import { CommandError, MachineError, type ListFolderResult, type DropboxEntry, type MachineOptions } from "../types";
 
 type LsOptions = MachineOptions & {
   limit?: string;
@@ -85,12 +86,17 @@ Examples:
     .action(async (path: string = "", options: LsOptions) => {
       if (isMachineListing(options)) return listPage(path, options);
       if (options.limit && options.type) {
-        throw new Error("--limit and --type cannot be used together");
+        throw new CommandError("command_failed", "--limit and --type cannot be used together");
       }
 
       // Dropbox uses "" for root, not "/"
       const dbxPath = path === "/" ? "" : path;
-      const limit = options.limit ? parseInt(options.limit, 10) : undefined;
+      let limit: number | undefined;
+      try {
+        limit = options.limit === undefined ? undefined : positiveInteger()(options.limit);
+      } catch {
+        throw new CommandError("invalid_args", "--limit must be a positive integer");
+      }
 
       // First page
       const listArgs: Record<string, unknown> = {

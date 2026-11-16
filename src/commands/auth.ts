@@ -1,12 +1,12 @@
 import type { Command } from "commander";
 import { login, logout, getStatus } from "../lib/auth";
-import { printSuccess, printError } from "../lib/output";
+import { printSuccess } from "../lib/output";
 import { logHuman } from "../lib/logger";
-import { CredentialError } from "../types";
+import { CommandError, CredentialError } from "../types";
 
 function authFailure(error: unknown): never {
-  if (error instanceof CredentialError) printError(error.code, error.message, 2);
-  printError("auth_failed", "Authentication failed");
+  if (error instanceof CredentialError) throw new CommandError(error.code, error.message, 2);
+  throw new CommandError("auth_failed", "Authentication failed");
 }
 
 export function registerAuthCommands(program: Command): void {

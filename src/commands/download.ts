@@ -3,9 +3,9 @@ import { contentDownload } from "../lib/api";
 import { isContentHash, isId, machineDownload } from "../lib/machine-api";
 import { printSuccess, formatBytes, runMachine } from "../lib/output";
 import { waitForRequest } from "../lib/streams";
-import { CredentialError, MachineError, type MachineOptions } from "../types";
-import { constants, existsSync, mkdirSync, writeFileSync } from "fs";
-import { open, lstat, link, unlink, type FileHandle } from "fs/promises";
+import { CommandError, CredentialError, MachineError, type MachineOptions } from "../types";
+import { constants, unlinkSync } from "fs";
+import { open, chmod, lstat, link, mkdir, rename, unlink, type FileHandle } from "fs/promises";
 import { createHash, randomUUID } from "crypto";
 import { logHuman } from "../lib/logger";
 import { basename, join, dirname, resolve, isAbsolute, parse } from "path";
@@ -15,6 +15,7 @@ interface OutputOptions extends MachineOptions {
   expectedId?: string;
   expectedHash?: string;
   progress?: boolean;
+  force?: boolean;
 }
 
 const CONTENT_HASH_BLOCK_BYTES = 4 * 1024 * 1024;
@@ -100,11 +101,13 @@ async function checkOutput(path: string): Promise<void> {
   }
 }
 
-async function writeAll(file: FileHandle, chunk: Uint8Array, signal?: AbortSignal): Promise<void> {
+async function writeAll(
+  file: FileHandle, chunk: Uint8Array, Failure: typeof MachineError | typeof CommandError, signal?: AbortSignal,
+): Promise<void> {
   for (let offset = 0; offset < chunk.length;) {
     signal?.throwIfAborted();
     const { bytesWritten } = await file.write(chunk, offset, chunk.length - offset);
-    if (!bytesWritten) throw new MachineError("local_io_error", "Unable to write the staging file.");
+    if (!bytesWritten) throw new Failure("local_io_error", "Unable to write the staging file.");
     offset += bytesWritten;
   }
 }
@@ -147,7 +150,7 @@ async function downloadOriginal(sources: string[], options: OutputOptions): Prom
         total += value.length;
         if (total > size) throw new MachineError("integrity_error", "Download exceeded the declared size.");
         hasher.update(value);
-        await writeAll(file, value, request.signal);
+        await writeAll(file, value, MachineError, request.signal);
         reportProgress(total);
       }
       reportProgress(total, true);
@@ -185,43 +188,100 @@ async function downloadOriginal(sources: string[], options: OutputOptions): Prom
   });
 }
 
+function outputExists(fileName: string): CommandError {
+  return new CommandError("output_exists", `${fileName} already exists; use --force to replace it.`);
+}
+
+function isExists(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === "EEXIST";
+}
+
+/** Moves a finished stage to its destination, replacing an existing file only with force. */
+async function publish(stage: string, localPath: string, fileName: string, force: boolean): Promise<void> {
+  if (force) {
+    // Replacing a file keeps its permissions, so a private file never becomes world-readable.
+    const existing = await lstat(localPath).catch(() => undefined);
+    if (existing?.isFile()) await chmod(stage, existing.mode & 0o777);
+    return rename(stage, localPath);
+  }
+  try {
+    // Hard-link publication is atomic and fails if anything already occupies the path.
+    return await link(stage, localPath);
+  } catch (error) {
+    if (isExists(error)) throw outputExists(fileName);
+  }
+  // No hard links on this volume (e.g. exFAT, FAT32, network shares): claim the name, then replace only our claim.
+  try {
+    await (await open(localPath, NEW_PRIVATE_FILE, 0o666)).close();
+  } catch (error) {
+    throw isExists(error) ? outputExists(fileName) : error;
+  }
+  try {
+    await rename(stage, localPath);
+  } catch (error) {
+    await unlink(localPath).catch(() => {});
+    throw error;
+  }
+}
+
 async function downloadSingleFile(
   remotePath: string,
-  localDir: string
+  localDir: string,
+  force: boolean
 ): Promise<{ remote_path: string; local_path: string; size: number }> {
+  if (!force) {
+    const requestedName = basename(remotePath);
+    const exists = await lstat(join(localDir, requestedName)).then(() => true, () => false);
+    if (exists) throw outputExists(requestedName);
+  }
+
   const { metadata, body } = await contentDownload("files/download", {
     path: remotePath,
   });
 
   const fileName = (metadata as { name?: string }).name || basename(remotePath);
   const localPath = resolve(join(localDir, fileName));
-
-  // Ensure local directory exists
   const dir = dirname(localPath);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
+  await mkdir(dir, { recursive: true });
 
   logHuman(`Downloading ${fileName}...`);
 
-  // Stream to file
-  const chunks: Uint8Array[] = [];
+  const stage = join(dir, `.dropbox-${randomUUID()}.part`);
+  // Bun's default signal exit skips finally blocks, so remove the stage before exiting.
+  const interrupt = (signal: NodeJS.Signals) => {
+    try { unlinkSync(stage); } catch {}
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  };
+  process.once("SIGINT", interrupt);
+  process.once("SIGTERM", interrupt);
   const reader = body.getReader();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
+  let file: FileHandle | undefined;
+  let size = 0;
+  try {
+    file = await open(stage, NEW_PRIVATE_FILE, 0o666);
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      await writeAll(file, value, CommandError);
+      size += value.length;
+    }
+    await file.close();
+    file = undefined;
+    await publish(stage, localPath, fileName, force);
+  } finally {
+    process.removeListener("SIGINT", interrupt);
+    process.removeListener("SIGTERM", interrupt);
+    void reader.cancel().catch(() => {});
+    await file?.close().catch(() => {});
+    await unlink(stage).catch(() => {});
   }
 
-  const fullContent = Buffer.concat(chunks);
-  writeFileSync(localPath, fullContent);
-
-  logHuman(`  Saved to: ${localPath} (${formatBytes(fullContent.length)})`);
+  logHuman(`  Saved to: ${localPath} (${formatBytes(size)})`);
 
   return {
     remote_path: remotePath,
     local_path: localPath,
-    size: fullContent.length,
+    size,
   };
 }
 
@@ -237,14 +297,20 @@ export function registerDownloadCommand(program: Command): void {
     .option("--progress", "Machine mode: bounded-rate byte progress as JSON lines on stderr")
     .option("--expected-account <id>", "Required account identity for machine mode")
     .option("--timeout <seconds>", "Machine request deadline (1–600 seconds)")
+    .option("--force", "Replace local files that already exist")
     .addHelpText("after", `
 Examples:
   $ dropbox-cli download /Documents/report.pdf             Download to current directory
   $ dropbox-cli download /Documents/report.pdf ./local     Download to a specific directory
-  $ dropbox-cli download /Photos/a.jpg /Photos/b.jpg .     Download multiple files`)
+  $ dropbox-cli download /Photos/a.jpg /Photos/b.jpg .     Download multiple files
+  $ dropbox-cli download /Documents/report.pdf --force     Replace an existing local copy`)
     .action(async (sources: string[], options: OutputOptions) => {
       // Any machine flag routes to the checked path so an incomplete invocation fails closed.
-      if (Object.keys(options).length) return downloadOriginal(sources, options);
+      if (Object.keys(options).some(key => key !== "force")) {
+        // --force is human-only; machine callers get the same rejection as any unknown option.
+        if (options.force) throw new MachineError("invalid_args", "Invalid command arguments. Use --help for usage.");
+        return downloadOriginal(sources, options);
+      }
       // If only one arg, download to current dir
       // If multiple args, last one is local destination
       let remotePaths: string[];
@@ -269,7 +335,7 @@ Examples:
       const results: Array<{ remote_path: string; local_path: string; size: number }> = [];
 
       for (const remotePath of remotePaths) {
-        const result = await downloadSingleFile(remotePath, localDir);
+        const result = await downloadSingleFile(remotePath, localDir, options.force ?? false);
         results.push(result);
       }
 

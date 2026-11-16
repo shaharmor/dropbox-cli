@@ -70,6 +70,15 @@ export class CredentialError extends Error {
   }
 }
 
+// A human-command failure, printed and exited by the CLI entry point only.
+export class CommandError extends Error {
+  constructor(public readonly code: string, message: string,
+    public readonly exitCode = 1, public readonly details?: Record<string, unknown>) {
+    super(message);
+    this.name = "CommandError";
+  }
+}
+
 export interface DropboxFile {
   ".tag": "file";
   name: string;

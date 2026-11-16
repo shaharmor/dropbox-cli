@@ -1,8 +1,10 @@
-import { test, expect, beforeEach, afterEach } from "bun:test";
+import { test, expect, beforeEach, afterEach, setDefaultTimeout } from "bun:test";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { pathToFileURL } from "url";
-import { fixture } from "../lib/auth-fixture";
+import { fixture, PROCESS_TEST_TIMEOUT_MS } from "../lib/auth-fixture";
+
+setDefaultTimeout(PROCESS_TEST_TIMEOUT_MS);
 
 let f: ReturnType<typeof fixture>;
 beforeEach(() => { f = fixture(); });

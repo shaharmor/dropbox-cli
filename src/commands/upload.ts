@@ -1,13 +1,16 @@
 import type { Command } from "commander";
-import { contentUpload } from "../lib/api";
-import { printSuccess, printError, formatBytes } from "../lib/output";
+import { contentUpload, contentUploadRaw, type RawResult } from "../lib/api";
+import { printSuccess, formatBytes } from "../lib/output";
 import { log, logHuman } from "../lib/logger";
-import { statSync, readFileSync } from "fs";
-import { basename, resolve } from "path";
-import type { FileMetadata } from "../types";
+import { responseError } from "../lib/transport";
+import { statSync, type Stats } from "fs";
+import { basename, posix, resolve } from "path";
+import { CommandError, type FileMetadata } from "../types";
 
-const SINGLE_UPLOAD_LIMIT = 150 * 1024 * 1024; // 150MB
+// Every request body is at most one chunk, so memory stays near one chunk whatever the file size.
 const CHUNK_SIZE = 8 * 1024 * 1024; // 8MB chunks
+// Re-sends of one chunk after its response was lost; 429/5xx retries happen in the transport.
+const MAX_LOST_RESPONSES = 3;
 
 type WriteMode = { ".tag": "add" } | { ".tag": "update"; update: string } | { ".tag": "overwrite" };
 
@@ -18,66 +21,111 @@ async function uploadSingleFile(
 ): Promise<FileMetadata> {
   const absolutePath = resolve(localPath);
   const stat = statSync(absolutePath);
-  const content = readFileSync(absolutePath);
+  if (!stat.isFile()) throw new CommandError("command_failed", `Not a file: ${localPath}`);
+  // Pin the upload to the size reported above, read lazily from disk one slice at a time.
+  const file = Bun.file(absolutePath).slice(0, stat.size);
 
   logHuman(`Uploading ${basename(localPath)} (${formatBytes(stat.size)})...`);
 
-  if (stat.size <= SINGLE_UPLOAD_LIMIT) {
-    return contentUpload<FileMetadata>("files/upload", {
-      path: remotePath,
-      mode: { ".tag": "add" } as WriteMode,
-      autorename,
-      mute: false,
-      strict_conflict: !autorename,
-    }, content);
+  const commit = {
+    path: remotePath,
+    mode: { ".tag": "add" } as WriteMode,
+    autorename,
+    mute: false,
+    strict_conflict: !autorename,
+  };
+
+  if (stat.size <= CHUNK_SIZE) {
+    // One request reads the whole body once, so there are no slices from different moments to mix.
+    return contentUpload<FileMetadata>("files/upload", commit, file);
   }
 
-  // Chunked upload for large files
-  return chunkedUpload(content, remotePath, autorename);
+  return chunkedUpload(file, absolutePath, stat, remotePath, commit);
 }
 
 async function chunkedUpload(
-  content: Buffer,
+  file: Blob,
+  absolutePath: string,
+  initial: Stats,
   remotePath: string,
-  autorename: boolean
+  commit: Record<string, unknown>
 ): Promise<FileMetadata> {
-  const totalSize = content.length;
-  let offset = 0;
+  const totalSize = file.size;
 
-  // Start session
+  // A replayed start only leaves an unused session behind, so it may retry like a read.
   const startResult = await contentUpload<{ session_id: string }>(
     "files/upload_session/start",
     { close: false },
-    content.subarray(0, CHUNK_SIZE)
+    file.slice(0, CHUNK_SIZE),
+    { retry: "read" }
   );
-  offset = CHUNK_SIZE;
+  let offset = CHUNK_SIZE;
   log(`Upload session started: ${startResult.session_id}`);
 
-  // Append chunks
-  while (offset + CHUNK_SIZE < totalSize) {
-    const chunk = content.subarray(offset, offset + CHUNK_SIZE);
-    await contentUpload("files/upload_session/append_v2", {
-      cursor: { session_id: startResult.session_id, offset },
-      close: false,
-    }, chunk);
-    offset += CHUNK_SIZE;
+  while (totalSize - offset > CHUNK_SIZE) {
+    offset = await appendChunk(file, startResult.session_id, offset);
 
     const pct = Math.round((offset / totalSize) * 100);
     logHuman(`  Progress: ${pct}% (${formatBytes(offset)} / ${formatBytes(totalSize)})`);
   }
 
-  // Finish with last chunk
-  const lastChunk = content.subarray(offset);
-  return contentUpload<FileMetadata>("files/upload_session/finish", {
-    cursor: { session_id: startResult.session_id, offset },
-    commit: {
-      path: remotePath,
-      mode: { ".tag": "add" } as WriteMode,
-      autorename,
-      mute: false,
-      strict_conflict: !autorename,
-    },
-  }, lastChunk);
+  // Slices are read lazily, so an edit during the upload would commit a mix of old and new bytes.
+  const current = statSync(absolutePath);
+  if (current.size !== initial.size || current.mtimeMs !== initial.mtimeMs) {
+    throw new CommandError(
+      "local_file_changed",
+      `The local file changed during the upload to ${remotePath}, so nothing was committed. Upload it again.`
+    );
+  }
+
+  // The commit is sent once: a lost response cannot prove the file was not created.
+  try {
+    return await contentUpload<FileMetadata>("files/upload_session/finish", {
+      cursor: { session_id: startResult.session_id, offset },
+      commit,
+    }, file.slice(offset));
+  } catch (error) {
+    // Exit 2 is a credential failure raised before the request was sent, so the commit never happened.
+    if (error instanceof CommandError && error.code === "connection_error" && error.exitCode !== 2) {
+      throw new CommandError(
+        "unknown_outcome",
+        `The upload to ${remotePath} may have completed, but Dropbox's response was lost. Check the destination before uploading again.`
+      );
+    }
+    throw error;
+  }
+}
+
+/** Appends the chunk at `offset` and returns the offset Dropbox has accepted up to. */
+async function appendChunk(file: Blob, sessionId: string, offset: number): Promise<number> {
+  const chunk = file.slice(offset, offset + CHUNK_SIZE);
+  for (let lost = 0; ; lost++) {
+    let result: RawResult;
+    try {
+      // Appending at a fixed offset is replay-safe: Dropbox refuses a duplicate with incorrect_offset.
+      result = await contentUploadRaw("files/upload_session/append_v2", {
+        cursor: { session_id: sessionId, offset },
+        close: false,
+      }, chunk, { retry: "read" });
+    } catch (error) {
+      if (!(error instanceof CommandError && error.code === "connection_error") || lost >= MAX_LOST_RESPONSES) throw error;
+      log(`Upload chunk at offset ${offset} was lost, re-sending`);
+      await Bun.sleep(2 ** lost * 1000);
+      continue;
+    }
+
+    if (result.ok) return offset + chunk.size;
+
+    const error = (result.data as { error?: { ".tag"?: unknown; correct_offset?: unknown } } | null)?.error;
+    if (result.status === 409 && error?.[".tag"] === "incorrect_offset") {
+      // Dropbox already holds the bytes up to correct_offset, e.g. after an append whose response was lost.
+      const correct = error.correct_offset;
+      if (typeof correct === "number" && correct > offset && correct <= file.size) return correct;
+      throw new CommandError("incorrect_offset", `Dropbox expected upload offset ${String(correct)}, which does not follow offset ${offset}.`);
+    }
+
+    throw responseError(result.status, result.data);
+  }
 }
 
 export function registerUploadCommand(program: Command): void {
@@ -95,7 +143,7 @@ Examples:
   $ dropbox-cli upload ./photo.jpg /Photos/pic.jpg --autorename    Auto-rename on conflict`)
     .action(async (sources: string[], options: { autorename?: boolean }) => {
       if (sources.length < 2) {
-        printError("invalid_args", "Usage: dropbox-cli upload <local-file...> <remote-path>");
+        throw new CommandError("invalid_args", "Usage: dropbox-cli upload <local-file...> <remote-path>");
       }
 
       const remoteDest = sources[sources.length - 1];
@@ -108,7 +156,7 @@ Examples:
         // If uploading multiple files, treat remoteDest as a directory
         const remotePath =
           localFiles.length > 1
-            ? `${remoteDest}/${basename(localFile)}`
+            ? posix.join(remoteDest, basename(localFile))
             : remoteDest;
 
         const result = await uploadSingleFile(localFile, remotePath, autorename);

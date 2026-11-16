@@ -3,6 +3,10 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { pathToFileURL } from "url";
 
+// Bun test timeout for tests that spawn processes. Spawns slow down several-fold on a busy
+// machine, so these tests need far more than Bun's 5s default.
+export const PROCESS_TEST_TIMEOUT_MS = 60_000;
+
 // Each worker loads real modules in a fresh process, not Bun's shared mock registry.
 export function fixture() {
   const root = mkdtempSync(join(tmpdir(), "dropbox-auth-fixture-"));
