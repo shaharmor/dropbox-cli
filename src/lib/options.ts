@@ -4,7 +4,7 @@ import { InvalidArgumentError } from "commander";
 export function positiveInteger(max?: number): (value: string) => number {
   return (value) => {
     const parsed = Number(value);
-    if (!/^\d+$/.test(value) || parsed < 1 || (max !== undefined && parsed > max)) {
+    if (!/^\d+$/.test(value) || !Number.isSafeInteger(parsed) || parsed < 1 || (max !== undefined && parsed > max)) {
       throw new InvalidArgumentError(max === undefined ? "Must be a positive integer." : `Must be an integer from 1 to ${max}.`);
     }
     return parsed;

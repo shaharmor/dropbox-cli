@@ -3,7 +3,7 @@ import { contentUpload, contentUploadRaw, type RawResult } from "../lib/api";
 import { printSuccess, formatBytes } from "../lib/output";
 import { log, logHuman } from "../lib/logger";
 import { responseError } from "../lib/transport";
-import { statSync } from "fs";
+import { statSync, type Stats } from "fs";
 import { basename, posix, resolve } from "path";
 import { CommandError, type FileMetadata } from "../types";
 
@@ -21,7 +21,7 @@ async function uploadSingleFile(
 ): Promise<FileMetadata> {
   const absolutePath = resolve(localPath);
   const stat = statSync(absolutePath);
-  if (!stat.isFile()) throw new CommandError("invalid_args", `Not a file: ${localPath}`);
+  if (!stat.isFile()) throw new CommandError("command_failed", `Not a file: ${localPath}`);
   // Pin the upload to the size reported above, read lazily from disk one slice at a time.
   const file = Bun.file(absolutePath).slice(0, stat.size);
 
@@ -36,14 +36,17 @@ async function uploadSingleFile(
   };
 
   if (stat.size <= CHUNK_SIZE) {
+    // One request reads the whole body once, so there are no slices from different moments to mix.
     return contentUpload<FileMetadata>("files/upload", commit, file);
   }
 
-  return chunkedUpload(file, remotePath, commit);
+  return chunkedUpload(file, absolutePath, stat, remotePath, commit);
 }
 
 async function chunkedUpload(
   file: Blob,
+  absolutePath: string,
+  initial: Stats,
   remotePath: string,
   commit: Record<string, unknown>
 ): Promise<FileMetadata> {
@@ -66,6 +69,15 @@ async function chunkedUpload(
     logHuman(`  Progress: ${pct}% (${formatBytes(offset)} / ${formatBytes(totalSize)})`);
   }
 
+  // Slices are read lazily, so an edit during the upload would commit a mix of old and new bytes.
+  const current = statSync(absolutePath);
+  if (current.size !== initial.size || current.mtimeMs !== initial.mtimeMs) {
+    throw new CommandError(
+      "local_file_changed",
+      `The local file changed during the upload to ${remotePath}, so nothing was committed. Upload it again.`
+    );
+  }
+
   // The commit is sent once: a lost response cannot prove the file was not created.
   try {
     return await contentUpload<FileMetadata>("files/upload_session/finish", {
@@ -73,7 +85,8 @@ async function chunkedUpload(
       commit,
     }, file.slice(offset));
   } catch (error) {
-    if (error instanceof CommandError && error.code === "connection_error") {
+    // Exit 2 is a credential failure raised before the request was sent, so the commit never happened.
+    if (error instanceof CommandError && error.code === "connection_error" && error.exitCode !== 2) {
       throw new CommandError(
         "unknown_outcome",
         `The upload to ${remotePath} may have completed, but Dropbox's response was lost. Check the destination before uploading again.`

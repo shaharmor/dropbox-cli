@@ -16,4 +16,8 @@ describe("positiveInteger", () => {
   test.each(["0", "-3", "2.5", "abc", "", "1001", "10abc", " 5"])("rejects %p", (value) => {
     expect(() => positiveInteger(1000)(value)).toThrow(InvalidArgumentError);
   });
+
+  test.each(["9".repeat(400), "9007199254740993"])("rejects integers too large to represent exactly (%#)", (value) => {
+    expect(() => positiveInteger()(value)).toThrow(InvalidArgumentError);
+  });
 });

@@ -25,12 +25,19 @@ const realFsPromises = { ...(await import("fs/promises")) };
 const mockLink = mock((existing: string, path: string) => linkFailure
   ? Promise.reject(Object.assign(new Error("link failed"), { code: linkFailure }))
   : realFsPromises.link(existing, path));
-mock.module("fs/promises", () => ({ ...realFsPromises, link: mockLink }));
+// Simulates a write that makes no progress.
+let zeroWrites = false;
+const mockOpen = async (...args: Parameters<typeof realFsPromises.open>) => {
+  const handle = await realFsPromises.open(...args);
+  if (zeroWrites) Object.assign(handle, { write: async () => ({ bytesWritten: 0 }) });
+  return handle;
+};
+mock.module("fs/promises", () => ({ ...realFsPromises, link: mockLink, open: mockOpen }));
 
 import { Command } from "commander";
 import { registerDownloadCommand } from "../../src/commands/download";
 import { CommandError } from "../../src/types";
-import { existsSync, readFileSync, readdirSync, rmSync, mkdirSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, readFileSync, readdirSync, rmSync, mkdirSync, statSync, writeFileSync } from "fs";
 import { join } from "path";
 
 const TEST_DIR = join(import.meta.dir, ".test-download");
@@ -72,6 +79,7 @@ describe("download command", () => {
     mockContentDownload.mockReset();
     captured = {};
     linkFailure = undefined;
+    zeroWrites = false;
     mockLink.mockClear();
     mkdirSync(TEST_DIR, { recursive: true });
     origCwd = process.cwd();
@@ -263,6 +271,18 @@ describe("download command", () => {
     expect(stagedFiles()).toEqual([]);
   });
 
+  test("--force keeps the permissions of the file it replaces", async () => {
+    writeFileSync("a.txt", "old");
+    chmodSync("a.txt", 0o600);
+    mockContentDownload.mockResolvedValueOnce({ metadata: { name: "a.txt" }, body: createReadableStream("new bytes") });
+
+    expect(await download("/a.txt", "--force")).toBeInstanceOf(Command);
+
+    expect(readFileSync("a.txt", "utf-8")).toBe("new bytes");
+    expect(statSync("a.txt").mode & 0o777).toBe(0o600);
+    expect(stagedFiles()).toEqual([]);
+  });
+
   test("refuses when the metadata name already exists locally", async () => {
     writeFileSync("actual-name.txt", "keep");
     mockContentDownload.mockResolvedValueOnce({ metadata: { name: "actual-name.txt" }, body: createReadableStream("data") });
@@ -284,6 +304,18 @@ describe("download command", () => {
     expect(existsSync("a.txt")).toBe(false);
     expect(stagedFiles()).toEqual([]);
     expect(captured.success).toBeUndefined();
+  });
+
+  test("a write that makes no progress fails as a human command error", async () => {
+    zeroWrites = true;
+    mockContentDownload.mockResolvedValueOnce({ metadata: { name: "a.txt" }, body: createReadableStream("data") });
+
+    const error = await download("/a.txt");
+
+    expect(error).toBeInstanceOf(CommandError);
+    expect(error).toMatchObject({ code: "local_io_error", message: "Unable to write the staging file.", exitCode: 1 });
+    expect(existsSync("a.txt")).toBe(false);
+    expect(stagedFiles()).toEqual([]);
   });
 
   test("a failed --force download keeps the existing file", async () => {

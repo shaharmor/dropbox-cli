@@ -27,7 +27,7 @@ mock.module("../../src/lib/output", () => ({
 import { Command } from "commander";
 import { registerUploadCommand } from "../../src/commands/upload";
 import { CommandError } from "../../src/types";
-import { writeFileSync, mkdirSync, rmSync } from "fs";
+import { writeFileSync, mkdirSync, rmSync, utimesSync } from "fs";
 import { join } from "path";
 
 const TEST_DIR = join(import.meta.dir, ".test-upload");
@@ -383,6 +383,47 @@ describe("upload sessions", () => {
     expect(finishes()).toHaveLength(1);
   });
 
+  test("a credential refresh failure before finish is reported as is, not as an unknown outcome", async () => {
+    writeLocal(CHUNK + 1);
+    finishError = new CommandError("connection_error", "Cannot refresh credentials. Check the connection and retry.", 2);
+
+    const error = await upload().catch((e: unknown) => e);
+
+    expect(error).toBe(finishError);
+    expect(error).toMatchObject({ code: "connection_error", exitCode: 2 });
+    expect(finishes()).toHaveLength(1);
+  });
+
+  test("a local file modified during the upload fails without finishing", async () => {
+    writeLocal(2 * CHUNK + 1);
+    appendResults = [() => {
+      utimesSync(LOCAL, new Date("2000-01-01T00:00:00Z"), new Date("2000-01-01T00:00:00Z"));
+      return { ok: true, status: 200, data: null };
+    }];
+
+    const error = await upload().catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(CommandError);
+    expect(error).toMatchObject({ code: "local_file_changed", exitCode: 1 });
+    expect((error as Error).message).toContain("nothing was committed");
+    expect(appends()).toHaveLength(1);
+    expect(finishes()).toHaveLength(0);
+  });
+
+  test("a local file that grows during the upload fails without finishing", async () => {
+    writeLocal(CHUNK + 1);
+    mockContentUpload.mockImplementationOnce(async (endpoint: string, arg: Call["arg"], body: Blob, options?: Call["options"]) => {
+      await record(endpoint, arg, body, options);
+      writeLocal(CHUNK + 2);
+      return { session_id: "fake-session" };
+    });
+
+    const error = await upload().catch((e: unknown) => e);
+
+    expect(error).toMatchObject({ code: "local_file_changed", exitCode: 1 });
+    expect(finishes()).toHaveLength(0);
+  });
+
   test("a finish refused by Dropbox is sent once and reports Dropbox's error", async () => {
     writeLocal(CHUNK + 1);
     finishError = new CommandError("path", "path/conflict/file/..");
@@ -401,7 +442,7 @@ describe("upload sessions", () => {
     })().catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(CommandError);
-    expect(error).toMatchObject({ code: "invalid_args" });
+    expect(error).toMatchObject({ code: "command_failed", message: `Not a file: ${SESSION_DIR}`, exitCode: 1 });
     expect(calls).toHaveLength(0);
   });
 });

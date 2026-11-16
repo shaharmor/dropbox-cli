@@ -4,8 +4,8 @@ import { isContentHash, isId, machineDownload } from "../lib/machine-api";
 import { printSuccess, formatBytes, runMachine } from "../lib/output";
 import { waitForRequest } from "../lib/streams";
 import { CommandError, CredentialError, MachineError, type MachineOptions } from "../types";
-import { constants } from "fs";
-import { open, lstat, link, mkdir, rename, unlink, type FileHandle } from "fs/promises";
+import { constants, unlinkSync } from "fs";
+import { open, chmod, lstat, link, mkdir, rename, unlink, type FileHandle } from "fs/promises";
 import { createHash, randomUUID } from "crypto";
 import { logHuman } from "../lib/logger";
 import { basename, join, dirname, resolve, isAbsolute, parse } from "path";
@@ -101,11 +101,13 @@ async function checkOutput(path: string): Promise<void> {
   }
 }
 
-async function writeAll(file: FileHandle, chunk: Uint8Array, signal?: AbortSignal): Promise<void> {
+async function writeAll(
+  file: FileHandle, chunk: Uint8Array, Failure: typeof MachineError | typeof CommandError, signal?: AbortSignal,
+): Promise<void> {
   for (let offset = 0; offset < chunk.length;) {
     signal?.throwIfAborted();
     const { bytesWritten } = await file.write(chunk, offset, chunk.length - offset);
-    if (!bytesWritten) throw new MachineError("local_io_error", "Unable to write the staging file.");
+    if (!bytesWritten) throw new Failure("local_io_error", "Unable to write the staging file.");
     offset += bytesWritten;
   }
 }
@@ -148,7 +150,7 @@ async function downloadOriginal(sources: string[], options: OutputOptions): Prom
         total += value.length;
         if (total > size) throw new MachineError("integrity_error", "Download exceeded the declared size.");
         hasher.update(value);
-        await writeAll(file, value, request.signal);
+        await writeAll(file, value, MachineError, request.signal);
         reportProgress(total);
       }
       reportProgress(total, true);
@@ -196,7 +198,12 @@ function isExists(error: unknown): boolean {
 
 /** Moves a finished stage to its destination, replacing an existing file only with force. */
 async function publish(stage: string, localPath: string, fileName: string, force: boolean): Promise<void> {
-  if (force) return rename(stage, localPath);
+  if (force) {
+    // Replacing a file keeps its permissions, so a private file never becomes world-readable.
+    const existing = await lstat(localPath).catch(() => undefined);
+    if (existing?.isFile()) await chmod(stage, existing.mode & 0o777);
+    return rename(stage, localPath);
+  }
   try {
     // Hard-link publication is atomic and fails if anything already occupies the path.
     return await link(stage, localPath);
@@ -240,6 +247,13 @@ async function downloadSingleFile(
   logHuman(`Downloading ${fileName}...`);
 
   const stage = join(dir, `.dropbox-${randomUUID()}.part`);
+  // Bun's default signal exit skips finally blocks, so remove the stage before exiting.
+  const interrupt = (signal: NodeJS.Signals) => {
+    try { unlinkSync(stage); } catch {}
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  };
+  process.once("SIGINT", interrupt);
+  process.once("SIGTERM", interrupt);
   const reader = body.getReader();
   let file: FileHandle | undefined;
   let size = 0;
@@ -248,13 +262,15 @@ async function downloadSingleFile(
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      await writeAll(file, value);
+      await writeAll(file, value, CommandError);
       size += value.length;
     }
     await file.close();
     file = undefined;
     await publish(stage, localPath, fileName, force);
   } finally {
+    process.removeListener("SIGINT", interrupt);
+    process.removeListener("SIGTERM", interrupt);
     void reader.cancel().catch(() => {});
     await file?.close().catch(() => {});
     await unlink(stage).catch(() => {});
