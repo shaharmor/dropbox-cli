@@ -52,6 +52,7 @@
 ### Changed
 - The release workflow fails before publishing when the pushed tag does not match the CLI's version.
 - The CLI reads its version from `package.json`, so a release bumps only that file.
+- Release builds install dependencies from the committed lockfile, and every workflow pins its GitHub Actions to full commit SHAs.
 - Per explicit owner override, reject/restore do not gate on known or matching sharing contexts, including separately shared `deleted` folders. Sharing metadata is informational; no sharing scopes, permissions or ownership-transfer options are added. Such moves may expose photos to destination collaborators.
 - Machine downloads use owner-selected standard filesystem safety, not native/FFI directory anchoring; concurrent same-user ancestor swaps are explicitly outside the supported boundary.
 - Separate read retries and authentication recovery; mutations are not automatically redispatched after HTTP errors. App-credential replacement clears existing tokens before publishing the new configuration.
