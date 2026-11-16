@@ -85,7 +85,7 @@ dropbox-cli bulk-mv "/Photos" "/Photos/2024" --match "2024-" --parallel 5
 | `--autorename`      | Auto-rename on conflict                |
 | `--dry-run`         | Show what would be moved without moving |
 | `--parallel <n>`    | Number of batches to move in parallel (default: 1) |
-| `--batch-size <n>`  | Number of files per batch (default: 500)            |
+| `--batch-size <n>`  | Number of files per batch, 1–1000 (default: 500)    |
 
 #### `cp` - Copy files
 
@@ -104,7 +104,14 @@ dropbox-cli cp "/a.txt" "/b.txt" "/c.txt" "/Backup"           # Copy multiple fi
 dropbox-cli download "/Documents/report.pdf"             # Download to current directory
 dropbox-cli download "/Documents/report.pdf" "./local"   # Download to a specific directory
 dropbox-cli download "/Photos/a.jpg" "/Photos/b.jpg" "." # Download multiple files
+dropbox-cli download "/Documents/report.pdf" --force     # Replace an existing local copy
 ```
+
+Files stream straight to disk. An existing local file is never replaced unless you pass `--force`; without it the download fails with `output_exists`. A failed download leaves no partial file behind.
+
+| Option    | Description                            |
+|-----------|----------------------------------------|
+| `--force` | Replace local files that already exist |
 
 #### `info` - Get file/folder metadata
 
@@ -150,6 +157,8 @@ dropbox-cli mv "/a.txt" "/b.txt" "/c.txt" "/Archive"        # Move multiple file
 | `--autorename` | Auto-rename on conflict |
 
 #### `search` - Search for files and folders
+
+Matches file names and, where the account supports it, file contents.
 
 ```sh
 dropbox-cli search "quarterly report"                  # Search all of Dropbox

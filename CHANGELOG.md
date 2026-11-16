@@ -20,8 +20,13 @@
 - Isolated process-contract fixtures for paging, stream interruption, local collisions, reject/restore drift, lost acknowledgments, bounded errors and concurrent stdout/stderr pressure.
 - Account-bound credential snapshots for CLI transport callers, with noninteractive authentication errors.
 - `auth login --non-interactive` and `--timeout` options, plus cancellation on SIGINT/SIGTERM.
+- `download --force` replaces local files that already exist.
 
 ### Fixed
+- `download` streams each file to disk instead of holding it in memory, and a failed download no longer leaves a partial file at the destination.
+- `bulk-mv` rejects a non-integer or out-of-range `--parallel` or `--batch-size` (1–1000) with `invalid_args` before sending any request.
+- `ls --limit` and `search --limit` reject non-integer or non-positive values with `invalid_args` before sending any request.
+- Multi-file `upload`, `cp`, `mv` and `bulk-mv` no longer build destination paths with a doubled slash when the destination ends in `/`.
 - Require and verify Dropbox's content hash for every original download; a response without a valid provider hash fails as `identity_mismatch` instead of publishing unverified bytes.
 - Report a throttled or unavailable token endpoint during refresh as `connection_error` instead of `auth_error`, so transient outages do not demand a reconnect.
 - Confirm `mv-batch` moves submitted without `contentHash` against the preflight content hash, so a provider-assigned new revision no longer reports `unknown`.
@@ -53,6 +58,8 @@
 - The release workflow fails before publishing when the pushed tag does not match the CLI's version.
 - The CLI reads its version from `package.json`, so a release bumps only that file.
 - Release builds install dependencies from the committed lockfile, and every workflow pins its GitHub Actions to full commit SHAs.
+- `download` no longer overwrites existing local files by default; it fails with `output_exists` unless `--force` is given.
+- `search` help now says it matches file names and, where the account supports it, file contents.
 - Per explicit owner override, reject/restore do not gate on known or matching sharing contexts, including separately shared `deleted` folders. Sharing metadata is informational; no sharing scopes, permissions or ownership-transfer options are added. Such moves may expose photos to destination collaborators.
 - Machine downloads use owner-selected standard filesystem safety, not native/FFI directory anchoring; concurrent same-user ancestor swaps are explicitly outside the supported boundary.
 - Separate read retries and authentication recovery; mutations are not automatically redispatched after HTTP errors. App-credential replacement clears existing tokens before publishing the new configuration.
