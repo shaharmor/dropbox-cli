@@ -1,10 +1,10 @@
 import type { Command } from "commander";
 import { contentUpload } from "../lib/api";
-import { printSuccess, printError, formatBytes } from "../lib/output";
+import { printSuccess, formatBytes } from "../lib/output";
 import { log, logHuman } from "../lib/logger";
 import { statSync, readFileSync } from "fs";
 import { basename, resolve } from "path";
-import type { FileMetadata } from "../types";
+import { CommandError, type FileMetadata } from "../types";
 
 const SINGLE_UPLOAD_LIMIT = 150 * 1024 * 1024; // 150MB
 const CHUNK_SIZE = 8 * 1024 * 1024; // 8MB chunks
@@ -95,7 +95,7 @@ Examples:
   $ dropbox-cli upload ./photo.jpg /Photos/pic.jpg --autorename    Auto-rename on conflict`)
     .action(async (sources: string[], options: { autorename?: boolean }) => {
       if (sources.length < 2) {
-        printError("invalid_args", "Usage: dropbox-cli upload <local-file...> <remote-path>");
+        throw new CommandError("invalid_args", "Usage: dropbox-cli upload <local-file...> <remote-path>");
       }
 
       const remoteDest = sources[sources.length - 1];

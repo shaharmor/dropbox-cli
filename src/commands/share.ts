@@ -1,8 +1,8 @@
 import type { Command } from "commander";
 import { rpc, rpcRaw } from "../lib/api";
-import { printSuccess, printError } from "../lib/output";
+import { printSuccess } from "../lib/output";
 import { logHuman } from "../lib/logger";
-import type { SharedLinkMetadata } from "../types";
+import { CommandError, type SharedLinkMetadata } from "../types";
 
 export function registerShareCommand(program: Command): void {
   program
@@ -45,6 +45,6 @@ Examples:
       }
 
       const errorSummary = (result.data as { error_summary?: string })?.error_summary;
-      printError("share_error", errorSummary || "Failed to create shared link");
+      throw new CommandError("share_error", errorSummary || "Failed to create shared link");
     });
 }

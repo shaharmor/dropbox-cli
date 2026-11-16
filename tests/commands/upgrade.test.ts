@@ -23,27 +23,25 @@ mock.module("../../src/lib/update", () => ({
   replaceBinary,
 }));
 
-let captured: { success?: unknown; error?: string } = {};
+let captured: { success?: unknown; error?: unknown } = {};
 
 mock.module("../../src/lib/output", () => ({
   printSuccess: (data: unknown) => {
     captured.success = data;
-  },
-  printError: (code: string) => {
-    captured.error = code;
-    throw new Error(`EXIT:${code}`);
   },
   isHuman: () => false,
 }));
 
 import { Command } from "commander";
 import { registerUpgradeCommand } from "../../src/commands/upgrade";
+import { CommandError } from "../../src/types";
 
 async function run() {
   const program = new Command();
   registerUpgradeCommand(program);
-  await program.parseAsync(["node", "test", "upgrade"]).catch((error: Error) => {
-    if (!error.message.startsWith("EXIT:")) throw error;
+  await program.parseAsync(["node", "test", "upgrade"]).catch((error: unknown) => {
+    if (!(error instanceof CommandError)) throw error;
+    captured.error = error;
   });
 }
 
@@ -75,21 +73,21 @@ describe("upgrade command", () => {
     latestRelease.mockResolvedValueOnce({ tag: "v1.2.0", version: "1.2.0" });
     replaceBinary.mockRejectedValueOnce(new UpgradeError("permission_denied", "Cannot write."));
     await run();
-    expect(captured.error).toBe("permission_denied");
+    expect(captured.error).toMatchObject({ code: "permission_denied", message: "Cannot write.", exitCode: 1 });
     expect(captured.success).toBeUndefined();
   });
 
   test("refuses to run from source without checking for releases", async () => {
     compiled = false;
     await run();
-    expect(captured.error).toBe("upgrade_unsupported");
+    expect(captured.error).toMatchObject({ code: "upgrade_unsupported", exitCode: 1 });
     expect(latestRelease).not.toHaveBeenCalled();
   });
 
   test("refuses on platforms without a published binary", async () => {
     asset = null;
     await run();
-    expect(captured.error).toBe("upgrade_unsupported");
+    expect(captured.error).toMatchObject({ code: "upgrade_unsupported", exitCode: 1 });
     expect(latestRelease).not.toHaveBeenCalled();
   });
 });

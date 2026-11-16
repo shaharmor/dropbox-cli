@@ -3,7 +3,7 @@ import { Command, CommanderError } from "commander";
 import { setVerbose } from "./lib/logger";
 import { setHumanMode, printSuccess, printError, printMachineError } from "./lib/output";
 import { CURRENT_VERSION, finishUpdateCheck, startUpdateCheck } from "./lib/update";
-import { CredentialError, MachineError } from "./types";
+import { CommandError, CredentialError, MachineError } from "./types";
 import { registerAuthCommands } from "./commands/auth";
 import { registerBulkMvCommand } from "./commands/bulk-mv";
 import { registerCpCommand } from "./commands/cp";
@@ -77,7 +77,10 @@ try {
     if (error.exitCode !== 0) printMachineError(new MachineError("invalid_args", "Invalid command arguments. Use --help for usage."));
   } else if (error instanceof Error && !(error instanceof MachineError) && !(error instanceof CredentialError)) {
     // Machine commands report their own errors, so only human-command failures reach here.
-    printError("command_failed", error.message);
+    // Exiting now, not via exitCode, also stops a pending update check from holding the process open.
+    const failure = error instanceof CommandError ? error : new CommandError("command_failed", error.message);
+    printError(failure);
+    process.exit(failure.exitCode);
   } else {
     printMachineError(error);
   }

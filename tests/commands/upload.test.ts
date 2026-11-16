@@ -10,16 +10,11 @@ mock.module("../../src/lib/api", () => ({
   pollBatchJob: mock(),
 }));
 
-let captured: { success?: unknown; error?: { code: string; message: string } } =
-  {};
+let captured: { success?: unknown } = {};
 
 mock.module("../../src/lib/output", () => ({
   printSuccess: (data: unknown) => {
     captured.success = data;
-  },
-  printError: (code: string, message: string) => {
-    captured.error = { code, message };
-    throw new Error(`EXIT:${code}`);
   },
   isHuman: () => false,
   formatBytes: (n: number) => `${n} B`,
@@ -29,6 +24,7 @@ mock.module("../../src/lib/output", () => ({
 
 import { Command } from "commander";
 import { registerUploadCommand } from "../../src/commands/upload";
+import { CommandError } from "../../src/types";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 
@@ -157,5 +153,14 @@ describe("upload command", () => {
       }),
       expect.any(Buffer)
     );
+  });
+
+  test("rejects a single argument as invalid_args", async () => {
+    const program = new Command();
+    registerUploadCommand(program);
+    const error = await program.parseAsync(["node", "test", "upload", "./a.txt"]).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CommandError);
+    expect(error).toMatchObject({ code: "invalid_args", message: "Usage: dropbox-cli upload <local-file...> <remote-path>", exitCode: 1 });
+    expect(mockContentUpload).not.toHaveBeenCalled();
   });
 });

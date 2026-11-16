@@ -1,4 +1,6 @@
-import { CredentialError, MachineError, type MachineErrorDetails, type MachineOptions, type RequestOptions } from "../types";
+import {
+  CommandError, CredentialError, MachineError, type MachineErrorDetails, type MachineOptions, type RequestOptions,
+} from "../types";
 
 let humanMode = false;
 
@@ -20,7 +22,7 @@ export interface ErrorEnvelope {
   error: {
     code: string;
     message: string;
-    details?: MachineErrorDetails;
+    details?: MachineErrorDetails | Record<string, unknown>;
   };
 }
 
@@ -28,17 +30,16 @@ export function formatSuccess<T>(data: T): SuccessEnvelope<T> {
   return { ok: true, data };
 }
 
-export function formatError(code: string, message: string): ErrorEnvelope {
-  return { ok: false, error: { code, message } };
+export function formatError(code: string, message: string, details?: Record<string, unknown>): ErrorEnvelope {
+  return { ok: false, error: details === undefined ? { code, message } : { code, message, details } };
 }
 
 export function printSuccess<T>(data: T): void {
   console.log(JSON.stringify(formatSuccess(data), null, 2));
 }
 
-export function printError(code: string, message: string, exitCode = 1): never {
-  console.log(JSON.stringify(formatError(code, message), null, 2));
-  process.exit(exitCode);
+export function printError(error: CommandError): void {
+  console.log(JSON.stringify(formatError(error.code, error.message, error.details), null, 2));
 }
 
 // Machine errors never echo argv, local exceptions, or response bodies as diagnostics.

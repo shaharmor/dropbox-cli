@@ -17,9 +17,6 @@ mock.module("../../src/lib/output", () => ({
   printSuccess: (data: unknown) => {
     captured.success = data;
   },
-  printError: (code: string, message: string) => {
-    throw new Error(`EXIT:${code}`);
-  },
   isHuman: () => false,
 }));
 
@@ -27,6 +24,7 @@ mock.module("../../src/lib/output", () => ({
 
 import { Command } from "commander";
 import { registerMvCommand } from "../../src/commands/mv";
+import { CommandError } from "../../src/types";
 
 describe("mv command", () => {
   beforeEach(() => {
@@ -162,5 +160,14 @@ describe("mv command", () => {
       "files/move_v2",
       expect.objectContaining({ autorename: true })
     );
+  });
+
+  test("rejects a single argument as invalid_args", async () => {
+    const program = new Command();
+    registerMvCommand(program);
+    const error = await program.parseAsync(["node", "test", "mv", "/a.txt"]).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CommandError);
+    expect(error).toMatchObject({ code: "invalid_args", message: "Usage: dropbox-cli mv <source...> <destination>", exitCode: 1 });
+    expect(mockRpc).not.toHaveBeenCalled();
   });
 });

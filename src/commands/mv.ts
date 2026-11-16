@@ -1,9 +1,9 @@
 import type { Command } from "commander";
 import { rpc, pollBatchJob } from "../lib/api";
 import { exactPath, isContentHash, isId, machineMetadata, machineRpc, pathExists, validateMetadata } from "../lib/machine-api";
-import { printSuccess, printError, runMachine } from "../lib/output";
+import { printSuccess, runMachine } from "../lib/output";
 import { logHuman } from "../lib/logger";
-import { MachineError, type DropboxEntry, type BatchResult, type MachineMetadata, type MachineOptions } from "../types";
+import { CommandError, MachineError, type DropboxEntry, type BatchResult, type MachineMetadata, type MachineOptions } from "../types";
 import { basename, posix } from "path";
 
 interface SafeMoveOptions extends MachineOptions {
@@ -114,7 +114,7 @@ Examples:
       const machineMode = Object.keys(options).some(key => key !== "autorename");
       if (machineMode) return safeMove(sources, options);
       if (sources.length < 2) {
-        printError("invalid_args", "Usage: dropbox-cli mv <source...> <destination>");
+        throw new CommandError("invalid_args", "Usage: dropbox-cli mv <source...> <destination>");
       }
 
       const dest = sources[sources.length - 1];

@@ -18,9 +18,6 @@ mock.module("../../src/lib/output", () => ({
   printSuccess: (data: unknown) => {
     captured.success = data;
   },
-  printError: (code: string, message: string) => {
-    throw new Error(`EXIT:${code}`);
-  },
   isHuman: () => false,
 }));
 
@@ -28,6 +25,7 @@ mock.module("../../src/lib/output", () => ({
 
 import { Command } from "commander";
 import { registerBulkMvCommand } from "../../src/commands/bulk-mv";
+import { CommandError } from "../../src/types";
 
 describe("bulk-mv command", () => {
   beforeEach(() => {
@@ -500,5 +498,47 @@ describe("bulk-mv command", () => {
         ],
       })
     );
+  });
+
+  test.each([
+    [401, "auth_error", "Dropbox authentication was refused. Reconnect the account.", 2],
+    [503, "destination_create_failed", "Destination creation failed or is uncertain. No files were moved; verify the destination before retrying.", 1],
+  ])("a %d destination create rejects with %s before listing", async (status, code, message, exitCode) => {
+    mockRpcRaw.mockResolvedValueOnce({ ok: false, status, data: {} });
+
+    const program = new Command();
+    registerBulkMvCommand(program);
+    const error = await program.parseAsync(["node", "test", "bulk-mv", "/S", "/D", "--match", ""]).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(CommandError);
+    expect(error).toMatchObject({ code, message, exitCode });
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  test("a parallel batch failure stops the run before any further move batch", async () => {
+    mockRpcRaw.mockResolvedValueOnce({ ok: true, status: 200, data: {} });
+    mockRpc.mockImplementation(async (endpoint: string) => {
+      if (endpoint === "files/list_folder") {
+        return { entries: [{ ".tag": "file", name: "a.txt", path_display: "/S/a.txt" }], cursor: "c1", has_more: true };
+      }
+      if (endpoint === "files/list_folder/continue") {
+        // Batch 1 fails while this page is still being fetched.
+        await Bun.sleep(20);
+        return { entries: [{ ".tag": "file", name: "b.txt", path_display: "/S/b.txt" }], cursor: "c2", has_more: false };
+      }
+      return { ".tag": "async_job_id", async_job_id: "fake-job" };
+    });
+    mockPollBatchJob.mockRejectedValueOnce(new CommandError("batch_error", "[batch 1] Batch job failed: failed"));
+
+    const program = new Command();
+    registerBulkMvCommand(program);
+    const error = await program.parseAsync([
+      "node", "test", "bulk-mv", "/S", "/D", "--match", "", "--parallel", "2", "--batch-size", "1",
+    ]).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(CommandError);
+    expect(error).toMatchObject({ code: "batch_error", message: "[batch 1] Batch job failed: failed", exitCode: 1 });
+    expect(mockRpc.mock.calls.filter(([endpoint]) => endpoint === "files/move_batch_v2")).toHaveLength(1);
+    expect(captured.success).toBeUndefined();
   });
 });

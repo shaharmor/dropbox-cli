@@ -263,10 +263,9 @@ describe("credential process coordination", () => {
     await seed();
     const held = f.start(`await config.withCredentialStoreAsync(async()=> { writeFileSync(join(root,'held'),''); await Bun.sleep(30000); });`);
     await barrier("held");
-    const result = await f.run(`globalThis.fetch=async()=> { throw new Error('DISPATCHED'); }; await api.rpc('files/list_folder',{});`);
-    expect(result.exit).not.toBe(0);
-    expect(result.stdout).toContain('coordination_timeout');
-    expect(result.stderr).not.toContain('DISPATCHED');
+    const result = await f.run(`globalThis.fetch=async()=> { throw new Error('DISPATCHED'); };
+      await assert.rejects(()=>api.rpc('files/list_folder',{}),e=>e.name==='CommandError'&&e.code==='coordination_timeout'&&e.exitCode===2);`);
+    expect(result).toMatchObject({ exit: 0, stderr: "" });
     expect(held.child.exitCode).toBeNull();
     held.child.kill("SIGKILL");
   });

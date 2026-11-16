@@ -16,9 +16,6 @@ mock.module("../../src/lib/output", () => ({
   printSuccess: (data: unknown) => {
     captured.success = data;
   },
-  printError: (code: string, message: string) => {
-    throw new Error(`EXIT:${code}`);
-  },
   isHuman: () => false,
   formatBytes: (n: number) => `${n} B`,
   formatDate: (s: string) => s,
@@ -28,6 +25,7 @@ mock.module("../../src/lib/output", () => ({
 
 import { Command } from "commander";
 import { registerLsCommand } from "../../src/commands/ls";
+import { CommandError } from "../../src/types";
 
 describe("ls command", () => {
   beforeEach(() => {
@@ -254,9 +252,10 @@ describe("ls command", () => {
     program.exitOverride();
     registerLsCommand(program);
 
-    await expect(
-      program.parseAsync(["node", "test", "ls", "--limit", "10", "--type", "folder"])
-    ).rejects.toThrow("--limit and --type cannot be used together");
+    const error = await program.parseAsync(["node", "test", "ls", "--limit", "10", "--type", "folder"]).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CommandError);
+    expect(error).toMatchObject({ code: "command_failed", message: "--limit and --type cannot be used together", exitCode: 1 });
+    expect(mockRpc).not.toHaveBeenCalled();
   });
 
   test("returns empty array for empty folder", async () => {

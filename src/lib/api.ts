@@ -1,14 +1,13 @@
 import { log } from "./logger";
-import { printError } from "./output";
 import { AUTH_REFUSED, CONTENT_BASE, RPC_BASE, fetchWithRetry, parseDropboxError, readError } from "./transport";
-import type { RequestOptions } from "../types";
+import { CommandError, type RequestOptions } from "../types";
 
 async function failResponse(response: Response): Promise<never> {
   if (response.status === 401) {
-    printError("auth_error", AUTH_REFUSED, 2);
+    throw new CommandError("auth_error", AUTH_REFUSED, 2);
   }
   const { code, message } = parseDropboxError(await readError(response));
-  printError(code, message);
+  throw new CommandError(code, message);
 }
 
 export async function rpc<T = unknown>(
@@ -100,6 +99,6 @@ export async function pollBatchJob<T = unknown>(endpoint: string, asyncJobId: st
     }
 
     // Failed
-    printError("batch_error", `${prefix}Batch job failed: ${result[".tag"]}`);
+    throw new CommandError("batch_error", `${prefix}Batch job failed: ${result[".tag"]}`);
   }
 }

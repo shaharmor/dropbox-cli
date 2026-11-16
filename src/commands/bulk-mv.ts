@@ -1,10 +1,10 @@
 import type { Command } from "commander";
 import { rpc, rpcRaw, pollBatchJob } from "../lib/api";
 import { isFolderConflict } from "../lib/machine-api";
-import { printError, printSuccess } from "../lib/output";
+import { printSuccess } from "../lib/output";
 import { AUTH_REFUSED } from "../lib/transport";
 import { log, logError, logHuman } from "../lib/logger";
-import type { ListFolderResult, BatchResult } from "../types";
+import { CommandError, type ListFolderResult, type BatchResult } from "../types";
 import { basename } from "path";
 
 const DEFAULT_batchSize = 500;
@@ -114,8 +114,8 @@ Examples:
           const error = (mkdirResult.data as { error?: unknown } | null)?.error;
           const folderExists = mkdirResult.status === 409 && isFolderConflict(error);
           if (!folderExists) {
-            if (mkdirResult.status === 401) printError("auth_error", AUTH_REFUSED, 2);
-            printError("destination_create_failed", "Destination creation failed or is uncertain. No files were moved; verify the destination before retrying.");
+            if (mkdirResult.status === 401) throw new CommandError("auth_error", AUTH_REFUSED, 2);
+            throw new CommandError("destination_create_failed", "Destination creation failed or is uncertain. No files were moved; verify the destination before retrying.");
           }
           log(`Destination folder ${dest} already exists`);
         }
@@ -129,6 +129,7 @@ Examples:
       const allFailures: MoveFailure[] = [];
       let totalListed = 0;
       let batchNum = 0;
+      let failure: unknown;
 
       const dbxSource = source === "/" ? "" : source;
 
@@ -141,15 +142,29 @@ Examples:
         allFailures.push(...failures);
       }
 
+      // The first batch failure stops the run: no further batch or listing request is sent.
+      function throwIfFailed(): void {
+        if (failure !== undefined) throw failure;
+      }
+
+      function track(batch: string[]): void {
+        throwIfFailed();
+        const promise = dispatchBatch(batch).then(
+          () => { inFlight.delete(promise); },
+          (error: unknown) => { inFlight.delete(promise); failure ??= error; },
+        );
+        inFlight.add(promise);
+      }
+
+      async function waitForSlot(): Promise<void> {
+        await Promise.race(inFlight);
+        throwIfFailed();
+      }
+
       async function flushReady(): Promise<void> {
         while (pending.length >= batchSize) {
-          const batch = pending.splice(0, batchSize);
-          const promise = dispatchBatch(batch).then(() => { inFlight.delete(promise); });
-          inFlight.add(promise);
-
-          if (inFlight.size >= parallel) {
-            await Promise.race(inFlight);
-          }
+          track(pending.splice(0, batchSize));
+          if (inFlight.size >= parallel) await waitForSlot();
         }
       }
 
@@ -181,9 +196,8 @@ Examples:
         if (!result.has_more) break;
 
         // If all parallel slots are full, wait for one before fetching the next page
-        if (!dryRun && inFlight.size >= parallel) {
-          await Promise.race(inFlight);
-        }
+        if (!dryRun && inFlight.size >= parallel) await waitForSlot();
+        throwIfFailed();
 
         result = await rpc<ListFolderResult>("files/list_folder/continue", {
           cursor: result.cursor,
@@ -191,15 +205,10 @@ Examples:
       }
 
       // Dispatch any remaining files as a final batch
-      if (!dryRun && pending.length > 0) {
-        const promise = dispatchBatch(pending.splice(0)).then(() => { inFlight.delete(promise); });
-        inFlight.add(promise);
-      }
+      if (!dryRun && pending.length > 0) track(pending.splice(0));
 
       // Wait for all in-flight batches to complete
-      if (inFlight.size > 0) {
-        await Promise.all(inFlight);
-      }
+      while (inFlight.size > 0) await waitForSlot();
 
       if (dryRun) {
         logHuman(`\n${totalFound} files would be moved.`);
