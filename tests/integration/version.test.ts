@@ -1,6 +1,9 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { join } from "path";
 import pkg from "../../package.json";
+import { PROCESS_TEST_TIMEOUT_MS } from "../lib/auth-fixture";
+
+setDefaultTimeout(PROCESS_TEST_TIMEOUT_MS);
 
 test("--version prints the package.json version", async () => {
   const child = Bun.spawn([process.execPath, join(import.meta.dir, "../../src/index.ts"), "--version"], {

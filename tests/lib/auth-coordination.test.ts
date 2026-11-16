@@ -1,7 +1,9 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, setDefaultTimeout } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
-import { fixture } from "./auth-fixture";
+import { fixture, PROCESS_TEST_TIMEOUT_MS } from "./auth-fixture";
+
+setDefaultTimeout(PROCESS_TEST_TIMEOUT_MS);
 
 let f: ReturnType<typeof fixture>;
 beforeEach(() => { f = fixture(); });
@@ -42,7 +44,7 @@ describe("credential process coordination", () => {
     expect(await a.result()).toMatchObject({ exit: 0 });
     expect(await b.result()).toMatchObject({ exit: 0 });
     expect(readFileSync(join(f.root, "refreshes"), "utf8").trim().split("\n")).toHaveLength(1);
-  }, 30000);
+  });
 
   for (const phase of ["before-open", "after-open", "replaced-after-open"] as const) {
     for (const asynchronous of [false, true]) {
@@ -85,7 +87,7 @@ describe("credential process coordination", () => {
         `);
         expect(result).toMatchObject({exit:0,stderr:""});
         expect(await owner.result()).toMatchObject({exit:0,stderr:""});
-      }, 15000);
+      });
     }
   }
 
@@ -110,7 +112,7 @@ describe("credential process coordination", () => {
         expect(result).toMatchObject({exit:0,stderr:""});
       }
     }
-  }, 15000);
+  });
 
   test("unlinked or multiply linked credentials and main database remain fail-closed", async () => {
     for (const name of ["auth.json", "auth-coordination.sqlite"]) {
@@ -152,7 +154,7 @@ describe("credential process coordination", () => {
       assert.ok(opens>before&&opens-before<500);
     `);
     expect(result).toMatchObject({exit:0,stderr:""});
-  }, 5000);
+  });
 
   test("a cancelled contender exits promptly without disturbing the live refresh owner", async () => {
     await seed();
@@ -169,7 +171,7 @@ describe("credential process coordination", () => {
     expect(held.child.exitCode).toBeNull();
     release("finish");expect(await held.result()).toMatchObject({exit:0});
     expect(await f.run(`assert.equal(config.readAuth().access_token,'fresh-A');`)).toMatchObject({exit:0});
-  }, 15000);
+  });
 
   test("contenders reread logout/account fences after waiting rather than dispatch stale or retargeted credentials", async () => {
     for(const change of ["store.clearAuth()", "store.writeAuth({...fake,account_id:'B',access_token:'fake-B'})"]) {
@@ -187,7 +189,7 @@ describe("credential process coordination", () => {
       expect(await held.result()).toMatchObject({exit:0});expect(await contender.result()).toMatchObject({exit:0,stderr:""});
       expect(await f.run(`assert.equal(config.readAuth()?.account_id,${suffix==='logout'?"undefined":"'B'"});`)).toMatchObject({exit:0});
     }
-  },15000);
+  });
 
   test("late completion after refresh cancellation cannot publish over logout or replacement account", async () => {
     for(const change of ["auth.logout()", "config.writeAuth({...fake,account_id:'B',access_token:'fake-B'})"]) {
@@ -209,7 +211,7 @@ describe("credential process coordination", () => {
     await barrier("reader-ready"); release("go");
     expect(await writer.result()).toMatchObject({ exit: 0 });
     expect(await reader.result()).toMatchObject({ exit: 0 });
-  }, 120000);
+  });
 
   test("death during refresh releases SQLite ownership without partial credentials", async () => {
     await seed();
@@ -222,7 +224,7 @@ describe("credential process coordination", () => {
       await api.rpc('files/list_folder',{}, {expectedAccountId:'A'});
       assert.equal(config.readAuth().access_token,'recovered-A');
     `)).toMatchObject({ exit: 0 });
-  }, 30000);
+  });
 
   test("logout waits for refresh then fences its completion", async () => {
     await seed();
@@ -233,7 +235,7 @@ describe("credential process coordination", () => {
     expect(await refreshing.result()).toMatchObject({ exit: 0 });
     expect(await logout.result()).toMatchObject({ exit: 0 });
     expect(await f.run(`assert.equal(config.readAuth(), null);`)).toMatchObject({ exit: 0 });
-  }, 30000);
+  });
 
   test("death before or after JSON rename leaves a complete record and durable generation fence", async () => {
     for (const after of [false, true]) {
@@ -255,7 +257,7 @@ describe("credential process coordination", () => {
         auth.logout(); assert.equal(config.readAuth(),null);
       `)).toMatchObject({exit:0});
     }
-  }, 60000);
+  });
 
   test("bounded coordination wait fails closed without dispatch", async () => {
     await seed();
@@ -267,5 +269,5 @@ describe("credential process coordination", () => {
     expect(result.stderr).not.toContain('DISPATCHED');
     expect(held.child.exitCode).toBeNull();
     held.child.kill("SIGKILL");
-  }, 30000);
+  });
 });

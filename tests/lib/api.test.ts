@@ -1,6 +1,6 @@
 import { test, expect, beforeEach, afterEach, setDefaultTimeout } from "bun:test";
-import { fixture } from "./auth-fixture";
-setDefaultTimeout(60000);
+import { fixture, PROCESS_TEST_TIMEOUT_MS } from "./auth-fixture";
+setDefaultTimeout(PROCESS_TEST_TIMEOUT_MS);
 let f: ReturnType<typeof fixture>;
 beforeEach(() => { f = fixture(); });
 afterEach(async () => { await f.close(); });
@@ -31,7 +31,7 @@ test("expected account mismatch blocks all transport variants before even refres
     const result=await f.run(`${seed} config.writeAuth({...fake,expires_at:1}); const opts={expectedAccountId:'B'}; globalThis.fetch=async()=>{console.error('DISPATCHED');return Response.json({});}; await ${call};`);
     expect(result.exit).not.toBe(0); expect(result.stdout).toContain('account_mismatch'); expect(result.stderr).not.toContain('DISPATCHED');
   }
-}, 20000);
+});
 
 test("an in-flight A result remains A after account changes; no credential lock spans content", async () => {
   expect(await f.run(`${seed}
@@ -46,7 +46,7 @@ test("401 recovery cannot retarget from A to B or resurrect logout", async () =>
     const result=await f.run(`${seed} let calls=0; globalThis.fetch=async()=> { calls++; if(calls>1) console.error('RETARGETED'); ${change}; return new Response('',{status:401}); }; await api.rpc('files/list_folder',{}, {expectedAccountId:'A'});`);
     expect(result.exit).not.toBe(0); expect(result.stderr).not.toContain('RETARGETED'); expect(result.stdout).toContain(change.includes('logout')?'auth_error':'account_mismatch');
   }
-}, 20000);
+});
 
 test("authentication recovery has a separate budget after a transient read failure", async () => {
   expect(await f.run(`${seed}
@@ -61,7 +61,7 @@ test("read 500 is retried but mutation 500/429/401 is never redispatched", async
   for(const status of [500,429,401]) {
     expect(await f.run(`${seed} let calls=0; globalThis.fetch=async()=>{calls++; return new Response('{}',{status:${status},headers:{'Retry-After':'0'}});}; const result=await api.rpcRaw('files/move_v2',{}, {expectedAccountId:'A',retry:'mutation'}); assert.equal(result.status,${status}); assert.equal(calls,1);`)).toMatchObject({exit:0});
   }
-}, 30000);
+});
 
 test("missing credentials and failed refresh produce noninteractive sanitized errors", async () => {
   const missing=await f.run(`await api.rpc('files/list_folder');`);

@@ -1,7 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { PROCESS_TEST_TIMEOUT_MS } from "./lib/auth-fixture";
+
+setDefaultTimeout(PROCESS_TEST_TIMEOUT_MS);
 
 const SCRIPT = resolve(import.meta.dir, "../install.sh");
 const DOWNLOAD_BASE = "https://github.com/shaharmor/dropbox-cli/releases/latest/download/";

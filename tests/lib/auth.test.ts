@@ -1,6 +1,6 @@
 import { test, expect, beforeEach, afterEach, setDefaultTimeout } from "bun:test";
-import { fixture } from "./auth-fixture";
-setDefaultTimeout(60000);
+import { fixture, PROCESS_TEST_TIMEOUT_MS } from "./auth-fixture";
+setDefaultTimeout(PROCESS_TEST_TIMEOUT_MS);
 let f: ReturnType<typeof fixture>;
 beforeEach(() => { f = fixture(); });
 afterEach(async () => { await f.close(); });
@@ -94,7 +94,7 @@ test("logout and a newer login supersede browser completion", async () => {
       assert.equal(config.readAuth(),null);
     `)).toMatchObject({exit:0});
   }
-}, 20000);
+});
 
 test("token/account failures and deadline do not persist credentials or leak response bodies", async () => {
   for (const mode of ['token','account','identity','timeout']) {
@@ -108,4 +108,4 @@ test("token/account failures and deadline do not persist credentials or leak res
       assert.equal(config.readAuth(),null); auth.logout();
     `)).toMatchObject({exit:0});
   }
-}, 30000);
+});

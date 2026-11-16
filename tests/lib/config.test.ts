@@ -1,6 +1,6 @@
 import { test, expect, beforeEach, afterEach, setDefaultTimeout } from "bun:test";
-import { fixture } from "./auth-fixture";
-setDefaultTimeout(60000);
+import { fixture, PROCESS_TEST_TIMEOUT_MS } from "./auth-fixture";
+setDefaultTimeout(PROCESS_TEST_TIMEOUT_MS);
 let f: ReturnType<typeof fixture>;
 beforeEach(() => { f = fixture(); });
 afterEach(async () => { await f.close(); });

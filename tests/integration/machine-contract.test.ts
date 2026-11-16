@@ -1,8 +1,10 @@
-import { test, expect, beforeEach, afterEach } from "bun:test";
+import { test, expect, beforeEach, afterEach, setDefaultTimeout } from "bun:test";
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "fs";
 import { join } from "path";
 import { pathToFileURL } from "url";
-import { fixture } from "../lib/auth-fixture";
+import { fixture, PROCESS_TEST_TIMEOUT_MS } from "../lib/auth-fixture";
+
+setDefaultTimeout(PROCESS_TEST_TIMEOUT_MS);
 
 let f: ReturnType<typeof fixture>;
 beforeEach(() => { f = fixture(); });
@@ -200,7 +202,7 @@ test("lost ack, delayed application, HTTP errors and malformed success remain un
   // A separate source-present read is not terminal refusal evidence for an earlier attempt.
   const info=await cli(['info','id:photo','--machine','--expected-account','A'],metadata+`globalThis.fetch=respond;`);
   expect(result(info).data.id).toBe('id:photo'); expect(result(info).data.outcome).toBeUndefined();
-}, 15000);
+});
 
 test("Retry-After is bounded timing evidence, never refusal evidence or mutation replay permission", async () => {
   for (const [header, expected] of [["3600", 3600], ["0", 0], [" 120 ", 120], [null, undefined], ["", undefined],
@@ -465,7 +467,7 @@ test("stream errors, integrity mismatch, cancellation and publication collision 
     if(fault==='collision') expect(readFileSync(path,'utf8')).toBe('keep'); else expect(existsSync(path)).toBe(false);
     expect(readdirSync(root).some(n=>n.endsWith('.part'))).toBe(false);
   }
-},15000);
+});
 
 for(const race of [false,true]) test(`safe mkdir ${race ? 'verifies the exact folder after terminal folder conflict' : "accepts a newly created folder with the provider's untagged FolderMetadata"}`, async () => {
   const create = race ? folderConflict : "const {['.tag']:tag,...folder}=deleted;return Response.json({metadata:folder});";
@@ -556,7 +558,7 @@ test("read backoff deadline cancels the timer and exits promptly without another
   expect(result(out).error).toMatchObject({code:'cancelled',details:{outcome:'not_submitted',http_status:429,retry_after_seconds:5}});
   expect(readFileSync(join(f.root,'backoff-dispatch'),'utf8')).toBe('once\n');
   expect(elapsed).toBeLessThan(2500);
-},10000);
+});
 
 test("SIGTERM during read backoff exits promptly and releases abort listeners", async () => {
   const worker=f.start(`${seed}globalThis.fetch=async()=>{appendFileSync(join(root,'backoff-signal'),'once\\n');return new Response('{}',{status:429,headers:{'Retry-After':'5'}});};process.argv=['bun','dropbox-cli','ls','--page','--expected-account','A'];await import(${JSON.stringify(entry)});`);
@@ -569,7 +571,7 @@ test("SIGTERM during read backoff exits promptly and releases abort listeners", 
   expect(Date.now()-started).toBeLessThan(1500);
   const listeners=await f.run(`const c=new AbortController();let attached=0;const add=c.signal.addEventListener.bind(c.signal),remove=c.signal.removeEventListener.bind(c.signal);c.signal.addEventListener=(...args)=>{attached++;add(...args);};c.signal.removeEventListener=(...args)=>{attached--;remove(...args);};c.abort();await assert.rejects(()=>api.waitForRequest(new Promise(()=>{}),c.signal));assert.equal(attached,0);`);
   expect(listeners.exit).toBe(0);
-},10000);
+});
 
 test("SIGTERM cancels a streaming original and SIGKILL leaves only an unpublished staging file", async () => {
   for(const signal of ['SIGTERM','SIGKILL'] as const) {
@@ -582,4 +584,4 @@ test("SIGTERM cancels a streaming original and SIGKILL leaves only an unpublishe
     if(signal==='SIGTERM') { expect(result(out).error.code).toBe('cancelled');expect(readdirSync(f.root).some(n=>n.endsWith('.part'))).toBe(false); }
     else expect(readdirSync(f.root).some(n=>n.endsWith('.part'))).toBe(true);
   }
-},15000);
+});
