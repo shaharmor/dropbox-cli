@@ -17,7 +17,7 @@ test("RPC/raw/upload/download and batch polling keep their success contracts", a
     assert.equal(new Headers(calls[0][1].headers).get('Authorization'),'Bearer fake-A');
     assert.equal(new Headers(calls[0][1].headers).get('Content-Type'),'application/json');
     assert.equal((await api.rpcRaw('sharing/create_shared_link')).status,200);
-    assert.equal((await api.contentUpload('files/upload',{path:'/fake'},new Uint8Array([1]))).ok,true);
+    assert.equal((await api.contentUpload('files/upload',{path:'/fake'},new Blob([new Uint8Array([1])]))).ok,true);
     assert.equal(new Headers(calls[2][1].headers).get('Dropbox-API-Arg'),'{"path":"/fake"}');
     const result=await api.contentDownload('files/download',{path:'rev:fake'},{expectedAccountId:'A'});
     assert.equal(result.metadata.id,'id:fake'); assert.ok(result.body);
@@ -28,8 +28,37 @@ test("RPC/raw/upload/download and batch polling keep their success contracts", a
   `)).toMatchObject({ exit: 0 });
 });
 
+test("content uploads send a Blob slice and the raw variant returns Dropbox's structured error", async () => {
+  expect(await f.run(`${seed}
+    let calls=[];
+    const file=new Blob([new Uint8Array([1,2,3,4,5])]).slice(1,4);
+    globalThis.fetch=async(url,options)=> { calls.push([url,new Uint8Array(await new Response(options.body).arrayBuffer()),new Headers(options.headers)]); return calls.length===1 ? Response.json({ok:true}) : Response.json({error:{'.tag':'incorrect_offset',correct_offset:3},error_summary:'incorrect_offset/..'},{status:409}); };
+    assert.deepEqual(await api.contentUploadRaw('files/upload_session/append_v2',{cursor:{session_id:'fake-session',offset:0}},file),{ok:true,status:200,data:{ok:true}});
+    assert.equal(String(calls[0][0]),'https://content.dropboxapi.com/2/files/upload_session/append_v2');
+    assert.deepEqual([...calls[0][1]],[2,3,4]);
+    assert.equal(calls[0][2].get('Content-Type'),'application/octet-stream');
+    assert.equal(calls[0][2].get('Dropbox-API-Arg'),'{"cursor":{"session_id":"fake-session","offset":0}}');
+    const refused=await api.contentUploadRaw('files/upload_session/append_v2',{},file);
+    assert.equal(refused.ok,false); assert.equal(refused.status,409); assert.equal(refused.data.error.correct_offset,3);
+    assert.deepEqual([...calls[1][1]],[2,3,4]);
+  `)).toMatchObject({ exit: 0 });
+});
+
+test("content uploads retry a 5xx only when sent as reads, re-sending the same bytes", async () => {
+  for (const call of ["api.contentUpload('files/upload_session/start',{},file,{retry:'read'})","api.contentUploadRaw('files/upload_session/append_v2',{},file,{retry:'read'})"]) {
+    expect(await f.run(`${seed} const file=new Blob([new Uint8Array([7,8])]); let bodies=[];
+      globalThis.fetch=async(url,options)=>{ bodies.push([...new Uint8Array(await new Response(options.body).arrayBuffer())]); return new Response('{}',{status:bodies.length===1?503:200,headers:{'Retry-After':'0'}}); };
+      await ${call}; assert.deepEqual(bodies,[[7,8],[7,8]]);`)).toMatchObject({ exit: 0 });
+  }
+  for (const call of ["api.contentUpload('files/upload_session/finish',{},file).catch(()=>{})","api.contentUploadRaw('files/upload_session/finish',{},file)"]) {
+    expect(await f.run(`${seed} const file=new Blob([new Uint8Array([7,8])]); let calls=0;
+      globalThis.fetch=async()=>{ calls++; return new Response('{}',{status:503,headers:{'Retry-After':'0'}}); };
+      await ${call}; assert.equal(calls,1);`)).toMatchObject({ exit: 0 });
+  }
+});
+
 test("expected account mismatch blocks all transport variants before even refreshing", async () => {
-  for (const call of ["api.rpc('files/list_folder',{},opts)","api.rpcRaw('files/move_v2',{},opts)","api.contentDownload('files/download',{},opts)","api.contentUpload('files/upload',{},new Uint8Array(),opts)"]) {
+  for (const call of ["api.rpc('files/list_folder',{},opts)","api.rpcRaw('files/move_v2',{},opts)","api.contentDownload('files/download',{},opts)","api.contentUpload('files/upload',{},new Blob([]),opts)","api.contentUploadRaw('files/upload_session/append_v2',{},new Blob([]),opts)"]) {
     const result=await f.run(`${seed} config.writeAuth({...fake,expires_at:1}); const opts={expectedAccountId:'B'}; globalThis.fetch=async()=>{console.error('DISPATCHED');return Response.json({});}; await assert.rejects(()=>${call},${commandError('account_mismatch',2)});`);
     expect(result).toMatchObject({exit:0,stderr:""});
   }

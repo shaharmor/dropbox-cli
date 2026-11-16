@@ -24,6 +24,8 @@
 
 ### Fixed
 - `download` streams each file to disk instead of holding it in memory, and a failed download no longer leaves a partial file at the destination.
+- `upload` reads files one 8 MB chunk at a time instead of loading the whole file into memory, and re-sends a chunk at the same offset after a dropped connection or temporary Dropbox error instead of aborting. The final commit is still sent only once.
+- `bulk-mv` stops sending batches when a batch or listing request fails partway, waits for in-flight batches, and exits non-zero with a `bulk_move_incomplete` error whose `details` report `matched`, `moved`, `failed`, per-file `failures`, `unconfirmed` paths and the triggering `cause`. The exit code is 2 for an auth failure, 1 otherwise. A failure before any batch is sent keeps its original error.
 - `bulk-mv` rejects a non-integer or out-of-range `--parallel` or `--batch-size` (1–1000) with `invalid_args` before sending any request.
 - `ls --limit` and `search --limit` reject non-integer or non-positive values with `invalid_args` before sending any request.
 - Multi-file `upload`, `cp`, `mv` and `bulk-mv` no longer build destination paths with a doubled slash when the destination ends in `/`.
@@ -60,6 +62,8 @@
 - Release builds install dependencies from the committed lockfile, and every workflow pins its GitHub Actions to full commit SHAs.
 - `download` no longer overwrites existing local files by default; it fails with `output_exists` unless `--force` is given.
 - `search` help now says it matches file names and, where the account supports it, file contents.
+- `bulk-mv` help and README describe what it does: it lists the source folder and moves files whose names start with `--match` (case-sensitive), filtered on the client.
+- `upload` uses an upload session for files over 8 MB (previously 150 MB). A lost response to the final commit fails with `unknown_outcome` and asks you to check the destination, and uploading a directory fails with `invalid_args` before any request.
 - Per explicit owner override, reject/restore do not gate on known or matching sharing contexts, including separately shared `deleted` folders. Sharing metadata is informational; no sharing scopes, permissions or ownership-transfer options are added. Such moves may expose photos to destination collaborators.
 - Machine downloads use owner-selected standard filesystem safety, not native/FFI directory anchoring; concurrent same-user ancestor swaps are explicitly outside the supported boundary.
 - Separate read retries and authentication recovery; mutations are not automatically redispatched after HTTP errors. App-credential replacement clears existing tokens before publishing the new configuration.

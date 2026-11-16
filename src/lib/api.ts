@@ -41,24 +41,45 @@ export async function rpcRaw(endpoint: string, body: Record<string, unknown> = {
   return { ok: response.ok, status: response.status, data };
 }
 
-export async function contentUpload<T = unknown>(
+function sendContent(
   endpoint: string,
   metadata: Record<string, unknown>,
-  content: Uint8Array,
-  options: RequestOptions = {}
-): Promise<T> {
-  const response = await fetchWithRetry(`${CONTENT_BASE}/${endpoint}`, {
+  content: Blob,
+  options: RequestOptions,
+): Promise<Response> {
+  return fetchWithRetry(`${CONTENT_BASE}/${endpoint}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/octet-stream",
       "Dropbox-API-Arg": JSON.stringify(metadata),
     },
-    body: content as BodyInit,
-  }, { ...options, retry: "mutation" });
+    body: content,
+  }, options);
+}
+
+export async function contentUpload<T = unknown>(
+  endpoint: string,
+  metadata: Record<string, unknown>,
+  content: Blob,
+  options: RequestOptions = {}
+): Promise<T> {
+  const response = await sendContent(endpoint, metadata, content, options);
 
   if (!response.ok) await failResponse(response);
 
   return response.json() as Promise<T>;
+}
+
+export async function contentUploadRaw(
+  endpoint: string,
+  metadata: Record<string, unknown>,
+  content: Blob,
+  options: RequestOptions = {}
+): Promise<{ ok: boolean; status: number; data: unknown }> {
+  const response = await sendContent(endpoint, metadata, content, options);
+
+  const data = response.ok ? await response.json().catch(() => null) : await readError(response);
+  return { ok: response.ok, status: response.status, data };
 }
 
 export async function contentDownload(

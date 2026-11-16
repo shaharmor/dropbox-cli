@@ -64,9 +64,9 @@ dropbox-cli auth logout     # Clear stored tokens
 
 ```
 
-#### `bulk-mv` - Batch move files by pattern
+#### `bulk-mv` - Batch move files by name prefix
 
-Search server-side and move matching files in batches. Handles thousands of files efficiently.
+Lists the source folder and moves files whose names start with `--match` (case-sensitive, filtered on the client) in batches. If a batch or listing request fails partway, the run stops sending batches, waits for the ones in flight, and exits non-zero with a `bulk_move_incomplete` error whose `details` list what was `moved`, what `failed`, which paths are `unconfirmed`, and the triggering `cause`. Re-run the same command to continue with the files still in the source.
 
 ```sh
 # Move all files starting with "2024-" from /Photos to /Photos/2024
@@ -81,7 +81,7 @@ dropbox-cli bulk-mv "/Photos" "/Photos/2024" --match "2024-" --parallel 5
 
 | Option              | Description                            |
 |---------------------|----------------------------------------|
-| `--match <pattern>` | **(required)** Filename prefix to match |
+| `--match <pattern>` | **(required)** Case-sensitive filename prefix to match |
 | `--autorename`      | Auto-rename on conflict                |
 | `--dry-run`         | Show what would be moved without moving |
 | `--parallel <n>`    | Number of batches to move in parallel (default: 1) |
@@ -193,7 +193,7 @@ When run in an interactive terminal, `dropbox-cli` checks for a newer release at
 
 #### `upload` - Upload files
 
-Supports chunked upload for files over 150MB.
+Files over 8 MB are uploaded in 8 MB chunks, so memory use stays near one chunk whatever the file size. A chunk whose response is lost is re-sent. The final commit is sent only once: if its response is lost, the command fails with `unknown_outcome` because the upload may have completed, so check the destination before uploading again.
 
 ```sh
 dropbox-cli upload "./report.pdf" "/Documents/report.pdf"          # Upload a single file
