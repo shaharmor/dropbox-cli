@@ -23,7 +23,7 @@ mock.module("../../src/lib/output", () => ({
 
 
 
-import { Command } from "commander";
+import { Command, CommanderError } from "commander";
 import { registerBulkMvCommand } from "../../src/commands/bulk-mv";
 import { CommandError } from "../../src/types";
 
@@ -513,6 +513,66 @@ describe("bulk-mv command", () => {
     expect(error).toBeInstanceOf(CommandError);
     expect(error).toMatchObject({ code, message, exitCode });
     expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ["--batch-size", "abc"],
+    ["--batch-size", "0"],
+    ["--batch-size", "1001"],
+    ["--batch-size", "2.5"],
+    ["--parallel", "0"],
+    ["--parallel", "-2"],
+    ["--parallel", "x"],
+  ])("rejects %s %p before any request", async (flag, value) => {
+    const program = new Command();
+    program.exitOverride();
+    program.configureOutput({ outputError: () => {} });
+    registerBulkMvCommand(program);
+
+    const error = await program.parseAsync(["node", "test", "bulk-mv", "/S", "/D", "--match", "", flag, value]).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CommanderError);
+    expect(error).toMatchObject({ code: "commander.invalidArgument", exitCode: 1 });
+    expect(mockRpcRaw).not.toHaveBeenCalled();
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  test("accepts --batch-size 1000", async () => {
+    mockRpcRaw.mockResolvedValueOnce({ ok: true, status: 200, data: {} });
+    mockRpc
+      .mockResolvedValueOnce({
+        entries: [{ ".tag": "file", name: "a.txt", path_display: "/S/a.txt" }],
+        cursor: "c",
+        has_more: false,
+      })
+      .mockResolvedValueOnce({ ".tag": "complete", entries: [{ ".tag": "success" }] });
+
+    const program = new Command();
+    registerBulkMvCommand(program);
+    await program.parseAsync(["node", "test", "bulk-mv", "/S", "/D", "--match", "", "--batch-size", "1000"]);
+
+    expect(captured.success).toEqual(expect.objectContaining({ moved: 1 }));
+  });
+
+  test.each([
+    ["/D/", "/D/a.txt"],
+    ["/", "/a.txt"],
+  ])("destination %p builds %p", async (dest, toPath) => {
+    mockRpcRaw.mockResolvedValueOnce({ ok: true, status: 200, data: {} });
+    mockRpc
+      .mockResolvedValueOnce({
+        entries: [{ ".tag": "file", name: "a.txt", path_display: "/S/a.txt" }],
+        cursor: "c",
+        has_more: false,
+      })
+      .mockResolvedValueOnce({ ".tag": "complete", entries: [{ ".tag": "success" }] });
+
+    const program = new Command();
+    registerBulkMvCommand(program);
+    await program.parseAsync(["node", "test", "bulk-mv", "/S", dest, "--match", ""]);
+
+    expect(mockRpc).toHaveBeenCalledWith("files/move_batch_v2", expect.objectContaining({
+      entries: [{ from_path: "/S/a.txt", to_path: toPath }],
+    }));
   });
 
   test("a parallel batch failure stops the run before any further move batch", async () => {

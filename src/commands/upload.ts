@@ -3,7 +3,7 @@ import { contentUpload } from "../lib/api";
 import { printSuccess, formatBytes } from "../lib/output";
 import { log, logHuman } from "../lib/logger";
 import { statSync, readFileSync } from "fs";
-import { basename, resolve } from "path";
+import { basename, posix, resolve } from "path";
 import { CommandError, type FileMetadata } from "../types";
 
 const SINGLE_UPLOAD_LIMIT = 150 * 1024 * 1024; // 150MB
@@ -108,7 +108,7 @@ Examples:
         // If uploading multiple files, treat remoteDest as a directory
         const remotePath =
           localFiles.length > 1
-            ? `${remoteDest}/${basename(localFile)}`
+            ? posix.join(remoteDest, basename(localFile))
             : remoteDest;
 
         const result = await uploadSingleFile(localFile, remotePath, autorename);

@@ -137,7 +137,7 @@ Examples:
         // Batch move
         const entries = srcPaths.map((src) => ({
           from_path: src,
-          to_path: `${dest}/${basename(src)}`,
+          to_path: posix.join(dest, basename(src)),
         }));
 
         const result = await rpc<BatchResult>("files/move_batch_v2", {

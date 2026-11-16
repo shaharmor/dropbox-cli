@@ -111,6 +111,19 @@ describe("upload command", () => {
     expect(captured.success).toHaveLength(2);
   });
 
+  test.each([
+    ["/Dir/", "/Dir"],
+    ["/", ""],
+  ])("multiple files to %p upload under it without a doubled slash", async (dest, dir) => {
+    mockContentUpload.mockResolvedValue({ name: "x", size: 6 });
+
+    const program = new Command();
+    registerUploadCommand(program);
+    await program.parseAsync(["node", "test", "upload", join(TEST_DIR, "a.txt"), join(TEST_DIR, "b.txt"), dest]);
+
+    expect(mockContentUpload.mock.calls.map((call) => call[1].path)).toEqual([`${dir}/a.txt`, `${dir}/b.txt`]);
+  });
+
   test("single file returns single result (not array)", async () => {
     mockContentUpload.mockResolvedValueOnce({
       name: "test.txt",

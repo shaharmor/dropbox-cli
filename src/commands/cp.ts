@@ -3,7 +3,7 @@ import { rpc, pollBatchJob } from "../lib/api";
 import { printSuccess } from "../lib/output";
 import { logHuman } from "../lib/logger";
 import { CommandError, type DropboxEntry, type BatchResult } from "../types";
-import { basename } from "path";
+import { basename, posix } from "path";
 
 export function registerCpCommand(program: Command): void {
   program
@@ -42,7 +42,7 @@ Examples:
         // Batch copy
         const entries = srcPaths.map((src) => ({
           from_path: src,
-          to_path: `${dest}/${basename(src)}`,
+          to_path: posix.join(dest, basename(src)),
         }));
 
         const result = await rpc<BatchResult>("files/copy_batch_v2", {

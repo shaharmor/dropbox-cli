@@ -10,11 +10,18 @@ mock.module("../../src/lib/api", () => ({
   pollBatchJob: mock(),
 }));
 
-let captured: { success?: unknown } = {};
+let captured: { success?: unknown; machineError?: unknown } = {};
 
 mock.module("../../src/lib/output", () => ({
   printSuccess: (data: unknown) => {
     captured.success = data;
+  },
+  runMachine: async (_options: unknown, operation: (request: unknown) => Promise<unknown>) => {
+    try {
+      captured.success = await operation({});
+    } catch (error) {
+      captured.machineError = error;
+    }
   },
   isHuman: () => false,
   formatBytes: (n: number) => `${n} B`,
@@ -25,7 +32,7 @@ mock.module("../../src/lib/output", () => ({
 
 import { Command } from "commander";
 import { registerLsCommand } from "../../src/commands/ls";
-import { CommandError } from "../../src/types";
+import { CommandError, MachineError } from "../../src/types";
 
 describe("ls command", () => {
   beforeEach(() => {
@@ -255,6 +262,31 @@ describe("ls command", () => {
     const error = await program.parseAsync(["node", "test", "ls", "--limit", "10", "--type", "folder"]).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(CommandError);
     expect(error).toMatchObject({ code: "command_failed", message: "--limit and --type cannot be used together", exitCode: 1 });
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  test.each(["0", "-1", "2.5", "abc"])("rejects --limit %p with invalid_args before any request", async (value) => {
+    const program = new Command();
+    program.exitOverride();
+    registerLsCommand(program);
+
+    const error = await program.parseAsync(["node", "test", "ls", "--limit", value]).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CommandError);
+    expect(error).toMatchObject({ code: "invalid_args", message: "--limit must be a positive integer", exitCode: 1 });
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  test("page mode keeps its own error for --limit", async () => {
+    const program = new Command();
+    program.exitOverride();
+    registerLsCommand(program);
+
+    await program.parseAsync(["node", "test", "ls", "--page", "--limit", "0", "--expected-account", "A"]);
+    expect(captured.machineError).toBeInstanceOf(MachineError);
+    expect(captured.machineError).toMatchObject({
+      code: "invalid_args",
+      message: "Page mode requires nonrecursive unfiltered listing, a size of 1–2000, and either a path or cursor.",
+    });
     expect(mockRpc).not.toHaveBeenCalled();
   });
 

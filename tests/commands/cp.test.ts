@@ -166,6 +166,24 @@ describe("cp command", () => {
     );
   });
 
+  test.each([
+    ["/Backup/", "/Backup/x.txt"],
+    ["/", "/x.txt"],
+  ])("batch destination %p builds %p", async (dest, toPath) => {
+    mockRpc.mockResolvedValueOnce({ ".tag": "complete", entries: [] });
+
+    const program = new Command();
+    registerCpCommand(program);
+    await program.parseAsync(["node", "test", "cp", "/a/x.txt", "/b/y.txt", dest]);
+
+    expect(mockRpc).toHaveBeenCalledWith("files/copy_batch_v2", expect.objectContaining({
+      entries: [
+        { from_path: "/a/x.txt", to_path: toPath },
+        { from_path: "/b/y.txt", to_path: toPath.replace("x.txt", "y.txt") },
+      ],
+    }));
+  });
+
   test("rejects a single argument as invalid_args", async () => {
     const program = new Command();
     registerCpCommand(program);

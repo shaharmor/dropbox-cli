@@ -2,21 +2,22 @@ import type { Command } from "commander";
 import { rpc } from "../lib/api";
 import { printSuccess, formatBytes } from "../lib/output";
 import { logHuman } from "../lib/logger";
+import { positiveInteger } from "../lib/options";
 import type { SearchResult, DropboxEntry } from "../types";
 
 export function registerSearchCommand(program: Command): void {
   program
     .command("search <query>")
-    .description("Search for files and folders by name")
+    .description("Search for files and folders by name and, where the account supports it, file contents")
     .option("--path <path>", "Limit search to a specific folder path")
-    .option("--limit <count>", "Maximum number of results", "100")
+    .option("--limit <count>", "Maximum number of results", positiveInteger(), 100)
     .addHelpText("after", `
 Examples:
   $ dropbox-cli search "quarterly report"                Search all of Dropbox
   $ dropbox-cli search "*.pdf" --path /Documents         Search within a folder
   $ dropbox-cli search "budget" --limit 5                Limit number of results`)
-    .action(async (query: string, options: { path?: string; limit?: string }) => {
-      const limit = parseInt(options.limit || "100", 10);
+    .action(async (query: string, options: { path?: string; limit: number }) => {
+      const limit = options.limit;
 
       const searchArgs: Record<string, unknown> = {
         query,
