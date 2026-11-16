@@ -5,7 +5,7 @@ import { printSuccess } from "../lib/output";
 import { AUTH_REFUSED } from "../lib/transport";
 import { log, logError, logHuman } from "../lib/logger";
 import { positiveInteger } from "../lib/options";
-import { CommandError, type ListFolderResult, type BatchResult } from "../types";
+import { CommandError, CredentialError, type ListFolderResult, type BatchResult } from "../types";
 import { basename, posix } from "path";
 
 const DEFAULT_batchSize = 500;
@@ -28,6 +28,15 @@ function describeFailure(failure: unknown): string {
     node = node[tag] as Record<string, unknown> | undefined;
   }
   return tags.length > 0 ? tags.join("/") : "unknown";
+}
+
+// Mirrors how the CLI entry point reports each error type, so the cause keeps its usual code and exit code.
+function describeCause(error: unknown): { code: string; message: string; exitCode: number } {
+  if (error instanceof CommandError) return { code: error.code, message: error.message, exitCode: error.exitCode };
+  if (error instanceof CredentialError) {
+    return { code: error.code, message: error.message, exitCode: error.code === "auth_error" ? 2 : 1 };
+  }
+  return { code: "command_failed", message: error instanceof Error ? error.message : String(error), exitCode: 1 };
 }
 
 async function moveBatch(
@@ -85,10 +94,10 @@ export function registerBulkMvCommand(program: Command): void {
   program
     .command("bulk-mv <source> <dest>")
     .description(
-      "Move files matching a pattern from source folder to destination folder. " +
-      "Searches server-side and moves in batches — handles thousands of files efficiently."
+      "Move files whose names start with --match (case-sensitive) from the source folder to the destination folder. " +
+      "Lists the source folder, filters names on the client, and moves matches in batches."
     )
-    .requiredOption("--match <pattern>", "Filename prefix to match (e.g. '2024-')")
+    .requiredOption("--match <pattern>", "Case-sensitive filename prefix to match (e.g. '2024-')")
     .option("--autorename", "Automatically rename on conflict")
     .option("--dry-run", "Show what would be moved without moving")
     .option("--parallel <n>", "Number of batches to move in parallel", positiveInteger(), 1)
@@ -99,7 +108,9 @@ Examples:
   $ dropbox-cli bulk-mv /Inbox /Archive --match "report" --dry-run         Preview what would be moved
   $ dropbox-cli bulk-mv /Downloads /Docs --match "draft" --autorename      Auto-rename on conflict
   $ dropbox-cli bulk-mv /Photos /Photos/2024 --match "2024-" --parallel 5  Move 5 batches at a time
-  $ dropbox-cli bulk-mv /Logs /Logs/old --match "2023-" --batch-size 100   Use smaller batches`)
+  $ dropbox-cli bulk-mv /Logs /Logs/old --match "2023-" --batch-size 100   Use smaller batches
+
+If a run stops early, re-run the same command to continue with the files still in the source.`)
     .action(async (source: string, dest: string, options: { match: string; autorename?: boolean; dryRun?: boolean; parallel: number; batchSize: number }) => {
       const autorename = options.autorename ?? false;
       const dryRun = options.dryRun ?? false;
@@ -131,42 +142,42 @@ Examples:
       const allFailures: MoveFailure[] = [];
       let totalListed = 0;
       let batchNum = 0;
-      let failure: unknown;
+      // Paths of thrown batches: Dropbox may or may not have moved them.
+      const unconfirmed: string[] = [];
+      // The first failure after a batch was sent stops the run: nothing new is sent after it.
+      let stopped = false;
+      let cause: unknown;
 
       const dbxSource = source === "/" ? "" : source;
+
+      function stop(error: unknown): void {
+        if (!stopped) cause = error;
+        stopped = true;
+      }
 
       async function dispatchBatch(batch: string[]): Promise<void> {
         batchNum++;
         const label = `batch ${batchNum}`;
         logHuman(`${label}: moving ${batch.length} files...`);
-        const { moved, failures } = await moveBatch(batch, dest, autorename, label);
-        totalMoved += moved;
-        allFailures.push(...failures);
-      }
-
-      // The first batch failure stops the run: no further batch or listing request is sent.
-      function throwIfFailed(): void {
-        if (failure !== undefined) throw failure;
+        try {
+          const { moved, failures } = await moveBatch(batch, dest, autorename, label);
+          totalMoved += moved;
+          allFailures.push(...failures);
+        } catch (error) {
+          unconfirmed.push(...batch);
+          stop(error);
+        }
       }
 
       function track(batch: string[]): void {
-        throwIfFailed();
-        const promise = dispatchBatch(batch).then(
-          () => { inFlight.delete(promise); },
-          (error: unknown) => { inFlight.delete(promise); failure ??= error; },
-        );
+        const promise = dispatchBatch(batch).finally(() => { inFlight.delete(promise); });
         inFlight.add(promise);
       }
 
-      async function waitForSlot(): Promise<void> {
-        await Promise.race(inFlight);
-        throwIfFailed();
-      }
-
       async function flushReady(): Promise<void> {
-        while (pending.length >= batchSize) {
+        while (!stopped && pending.length >= batchSize) {
           track(pending.splice(0, batchSize));
-          if (inFlight.size >= parallel) await waitForSlot();
+          if (inFlight.size >= parallel) await Promise.race(inFlight);
         }
       }
 
@@ -198,19 +209,45 @@ Examples:
         if (!result.has_more) break;
 
         // If all parallel slots are full, wait for one before fetching the next page
-        if (!dryRun && inFlight.size >= parallel) await waitForSlot();
-        throwIfFailed();
+        if (!dryRun && inFlight.size >= parallel) await Promise.race(inFlight);
+        if (stopped) break;
 
-        result = await rpc<ListFolderResult>("files/list_folder/continue", {
-          cursor: result.cursor,
-        });
+        try {
+          result = await rpc<ListFolderResult>("files/list_folder/continue", {
+            cursor: result.cursor,
+          });
+        } catch (error) {
+          // Before any batch is sent nothing has moved, so the original error stands.
+          if (batchNum === 0) throw error;
+          stop(error);
+          break;
+        }
       }
 
       // Dispatch any remaining files as a final batch
-      if (!dryRun && pending.length > 0) track(pending.splice(0));
+      if (!dryRun && !stopped && pending.length > 0) track(pending.splice(0));
 
       // Wait for all in-flight batches to complete
-      while (inFlight.size > 0) await waitForSlot();
+      await Promise.all(inFlight);
+
+      if (stopped) {
+        const { code, message, exitCode } = describeCause(cause);
+        throw new CommandError(
+          "bulk_move_incomplete",
+          `Bulk move stopped early (${code}): moved ${totalMoved}, failed ${allFailures.length}, ` +
+          `unconfirmed ${unconfirmed.length} of ${totalFound} matched. ` +
+          "Re-run to continue with the files still in the source.",
+          exitCode,
+          {
+            matched: totalFound,
+            moved: totalMoved,
+            failed: allFailures.length,
+            failures: allFailures,
+            unconfirmed,
+            cause: { code, message },
+          },
+        );
+      }
 
       if (dryRun) {
         logHuman(`\n${totalFound} files would be moved.`);
